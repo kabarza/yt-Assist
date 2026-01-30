@@ -71,28 +71,35 @@ export default function ChatList({
             {sortedChats.map((chat) => (
               <div
                 key={chat.id}
-                className={`
-                  group flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-colors
-                  ${activeChatId === chat.id 
-                    ? 'bg-gray-800 text-white' 
-                    : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200'
-                  }
-                `}
-                onClick={() => onSelectChat(chat.id)}
-                data-flow-name={`chat-item-${chat.id}`}
+                className="group relative"
               >
-                <ChatIcon />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{chat.title}</p>
-                  <p className="text-xs text-gray-500">{formatDate(chat.updatedAt)}</p>
-                </div>
+                <button
+                  onClick={() => onSelectChat(chat.id)}
+                  data-flow-name={`chat-item-${chat.id}`}
+                  className={`
+                    w-full flex items-start gap-2 p-2 rounded-lg transition-colors text-left
+                    ${activeChatId === chat.id
+                      ? 'bg-gray-800 text-white'
+                      : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200'
+                    }
+                  `}
+                  aria-label={`Select chat: ${chat.title}`}
+                  aria-current={activeChatId === chat.id ? 'true' : undefined}
+                >
+                  <ChatIcon />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{chat.title}</p>
+                    <p className="text-xs text-gray-500">{formatDate(chat.updatedAt)}</p>
+                  </div>
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
                     onDeleteChat(chat.id)
                   }}
                   data-flow-name={`delete-chat-${chat.id}`}
-                  className="opacity-0 group-hover:opacity-100 p-1 text-gray-500 hover:text-red-400 transition-all"
+                  className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 p-1 text-gray-500 hover:text-red-400 transition-all"
+                  aria-label={`Delete chat: ${chat.title}`}
                 >
                   <TrashIcon />
                 </button>

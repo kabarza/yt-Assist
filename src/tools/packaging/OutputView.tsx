@@ -122,6 +122,8 @@ export default function OutputView({ generatedPrompt, onBack, onSendToChat }: Ou
                   ? 'bg-lime-500 text-gray-900'
                   : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
               }`}
+              aria-label="Toggle output history"
+              aria-expanded={showHistory}
             >
               <HistoryIcon />
               History ({history.length})
@@ -181,6 +183,7 @@ export default function OutputView({ generatedPrompt, onBack, onSendToChat }: Ou
                     removeFromHistory(item.id)
                   }}
                   className="opacity-0 group-hover:opacity-100 p-1 text-gray-500 hover:text-red-400 transition-all"
+                  aria-label="Remove from history"
                 >
                   <TrashIcon />
                 </button>

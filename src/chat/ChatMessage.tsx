@@ -1,6 +1,8 @@
 import type { Message } from '../types/chat'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useCanvasStore } from '../stores/canvasStore'
+import { useState } from 'react'
 
 interface ChatMessageProps {
   message: Message
@@ -18,8 +20,25 @@ const BotIcon = () => (
   </svg>
 )
 
+// Parse canvas-update blocks from text
+function parseCanvasUpdates(text: string): { beforeText: string; canvasUpdate: string | null; afterText: string } {
+  const canvasUpdateRegex = /<canvas-update>([\s\S]*?)<\/canvas-update>/;
+  const match = text.match(canvasUpdateRegex);
+
+  if (match) {
+    const beforeText = text.substring(0, match.index);
+    const canvasUpdate = match[1].trim();
+    const afterText = text.substring((match.index || 0) + match[0].length);
+    return { beforeText, canvasUpdate, afterText };
+  }
+
+  return { beforeText: text, canvasUpdate: null, afterText: '' };
+}
+
 export default function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === 'user'
+  const { setContent } = useCanvasStore()
+  const [appliedUpdates, setAppliedUpdates] = useState<Set<number>>(new Set())
 
   return (
     <div className={`flex gap-3 ${isUser ? '' : 'bg-gray-900/50 -mx-4 px-4 py-4 rounded-lg'}`}>
@@ -43,20 +62,67 @@ export default function ChatMessage({ message }: ChatMessageProps) {
                 <img
                   key={i}
                   src={part.imageData}
-                  alt="Attached"
+                  alt="User uploaded image"
                   className="max-w-md max-h-64 rounded-lg border border-gray-700"
                 />
               )
             }
             if (part.type === 'text' && part.text) {
+              const { beforeText, canvasUpdate, afterText } = parseCanvasUpdates(part.text);
+              const hasCanvasUpdate = canvasUpdate !== null;
+
               return (
-                <div
-                  key={i}
-                  className="text-gray-200 prose prose-invert max-w-none prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-ol:my-2 prose-li:my-0 prose-table:my-2 prose-pre:my-2"
-                >
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {part.text}
-                  </ReactMarkdown>
+                <div key={i} className="space-y-3">
+                  {beforeText && (
+                    <div className="text-gray-200 prose prose-invert max-w-none prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-ol:my-2 prose-li:my-0 prose-table:my-2 prose-pre:my-2">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {beforeText}
+                      </ReactMarkdown>
+                    </div>
+                  )}
+
+                  {hasCanvasUpdate && canvasUpdate && (
+                    <div className="border border-lime-500/30 bg-lime-500/5 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-lime-400">Canvas Update</span>
+                        <button
+                          onClick={() => {
+                            setContent(canvasUpdate);
+                            setAppliedUpdates(prev => new Set(prev).add(i));
+                            // Visual feedback
+                            setTimeout(() => {
+                              setAppliedUpdates(prev => {
+                                const next = new Set(prev);
+                                next.delete(i);
+                                return next;
+                              });
+                            }, 2000);
+                          }}
+                          className={`px-3 py-1 rounded text-sm transition-colors ${
+                            appliedUpdates.has(i)
+                              ? 'bg-green-600 text-white'
+                              : 'bg-lime-600 hover:bg-lime-700 text-white'
+                          }`}
+                          aria-label="Apply canvas update to editor"
+                        >
+                          {appliedUpdates.has(i) ? 'Applied!' : 'Apply to Canvas'}
+                        </button>
+                      </div>
+                      <div className="text-gray-300 prose prose-invert max-w-none text-sm bg-gray-800/50 p-3 rounded">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {canvasUpdate}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+                  )}
+
+                  {afterText && (
+                    <div className="text-gray-200 prose prose-invert max-w-none prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-ol:my-2 prose-li:my-0 prose-table:my-2 prose-pre:my-2">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {afterText}
+                      </ReactMarkdown>
+                    </div>
+                  )}
                 </div>
               )
             }

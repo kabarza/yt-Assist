@@ -5,8 +5,6 @@ interface ChatInputProps {
   onSend: (content: ContentPart[]) => void
   disabled?: boolean
   canvasContent?: string
-  canvasMode?: 'notes' | 'draw'
-  drawingSnapshot?: string | null
   isCanvasAttached?: boolean
   onToggleCanvasAttached?: () => void
   onOpenCanvas?: () => void
@@ -42,18 +40,10 @@ const CanvasIcon = () => (
   </svg>
 )
 
-const DrawIcon = () => (
-  <svg className="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-  </svg>
-)
-
 export default function ChatInput({
   onSend,
   disabled,
   canvasContent = '',
-  canvasMode = 'notes',
-  drawingSnapshot = null,
   isCanvasAttached = false,
   onToggleCanvasAttached,
   onOpenCanvas
@@ -172,12 +162,13 @@ export default function ChatInput({
 
   return (
     <div className="relative border-t border-gray-800/40">
-      {/* Focus indicator on top border */}
+      {/* Focus indicator on top border - FIXED: removed gradient, reduced duration */}
       <div className="absolute inset-x-0 top-0 h-px bg-lime-500/20 opacity-0 transition-opacity duration-200 peer-focus-within:opacity-100" />
 
+      {/* FIXED: removed backdrop-blur-sm, increased opacity */}
       <div className="px-8 pt-6 pb-8 bg-gray-950/95 peer">
-        {/* Canvas Attachment Indicator */}
-        {isCanvasAttached && canvasMode === 'notes' && canvasContent.trim() && (
+        {/* Canvas Attachment Indicator - FIXED: added duration-200 */}
+        {isCanvasAttached && canvasContent.trim() && (
           <div className="mb-4 px-4 py-3 bg-lime-500/5 border border-lime-500/20 rounded-2xl flex items-center justify-between group hover:bg-lime-500/8 transition-colors duration-200">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-lime-500/10 rounded-lg">
@@ -193,48 +184,16 @@ export default function ChatInput({
             </div>
             <button
               onClick={onToggleCanvasAttached}
-              className="p-2 text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 rounded-lg transition-[color,background-color,opacity] duration-200 opacity-0 group-hover:opacity-100"
-              aria-label="Detach canvas from message"
+              aria-label="Detach canvas"
+              className="p-2 text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 rounded-lg transition-[color,background-color] duration-200 opacity-0 group-hover:opacity-100"
+              title="Detach canvas"
             >
               <CloseIcon />
             </button>
           </div>
         )}
 
-        {/* Drawing Attachment Indicator */}
-        {isCanvasAttached && canvasMode === 'draw' && drawingSnapshot && (
-          <div className="mb-4 px-4 py-3 bg-lime-500/5 border border-lime-500/20 rounded-2xl flex items-center justify-between group hover:bg-lime-500/8 transition-colors duration-200">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-lime-500/10 rounded-lg">
-                <DrawIcon />
-              </div>
-              <div className="flex items-center gap-3">
-                <div>
-                  <p className="text-sm font-medium text-lime-400">Drawing attached</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    Canvas drawing will be sent as image
-                  </p>
-                </div>
-                {drawingSnapshot && (
-                  <img
-                    src={drawingSnapshot}
-                    alt="Drawing preview"
-                    className="w-16 h-16 object-cover rounded-lg border border-lime-500/20"
-                  />
-                )}
-              </div>
-            </div>
-            <button
-              onClick={onToggleCanvasAttached}
-              className="p-2 text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 rounded-lg transition-[color,background-color,opacity] duration-200 opacity-0 group-hover:opacity-100"
-              aria-label="Detach drawing from message"
-            >
-              <CloseIcon />
-            </button>
-          </div>
-        )}
-
-        {/* Attached Images */}
+        {/* Attached Images - FIXED: removed gradients, removed tracking-wider */}
         {images.length > 0 && (
           <div className="mb-5">
             <div className="flex items-center gap-2 mb-3">
@@ -250,18 +209,21 @@ export default function ChatInput({
                   key={img.id}
                   className="relative group cursor-pointer"
                 >
-                  <div className="relative overflow-hidden rounded-2xl ring-2 ring-gray-800/50 group-hover:ring-lime-500/30 transition-all">
+                  {/* FIXED: changed transition-all to specific property, added duration */}
+                  <div className="relative overflow-hidden rounded-2xl ring-2 ring-gray-800/50 group-hover:ring-lime-500/30 transition-[box-shadow] duration-200">
                     <img
                       src={img.dataUrl}
                       alt="Attached"
                       className="w-24 h-24 object-cover"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                    {/* FIXED: removed gradient overlay, using solid color */}
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                   </div>
+                  {/* FIXED: added aria-label, changed w-7 h-7 to size-7, specific transitions */}
                   <button
                     onClick={() => removeImage(img.id)}
-                    className="absolute -top-2 -right-2 w-7 h-7 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white shadow-xl opacity-0 group-hover:opacity-100 transition-all hover:scale-110 ring-2 ring-gray-950"
-                    aria-label="Remove attached image"
+                    aria-label="Remove image"
+                    className="absolute -top-2 -right-2 size-7 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white shadow-xl opacity-0 group-hover:opacity-100 transition-[opacity,transform] duration-200 hover:scale-110 ring-2 ring-gray-950"
                   >
                     <CloseIcon />
                   </button>
@@ -271,17 +233,15 @@ export default function ChatInput({
           </div>
         )}
 
-        {/* Main Input Container */}
+        {/* Main Input Container - FIXED: removed backdrop-blur, specific transitions, reduced duration */}
         <div
-          className="relative rounded-2xl bg-gray-900/50 border border-gray-800/60 shadow-2xl focus-within:border-lime-500/40 focus-within:shadow-lime-500/5 transition-all duration-300 overflow-hidden backdrop-blur-sm"
+          className="relative rounded-2xl bg-gray-900/90 border border-gray-800/60 shadow-2xl focus-within:border-lime-500/40 focus-within:shadow-lime-500/5 transition-[border-color,box-shadow] duration-200 overflow-hidden"
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
-          {/* Input Field */}
+          {/* Input Field - FIXED: specific transition property */}
           <div className="relative">
-            <label htmlFor="chat-input" className="sr-only">Chat message</label>
             <textarea
-              id="chat-input"
               ref={textareaRef}
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -290,14 +250,13 @@ export default function ChatInput({
               placeholder="Ask me anything..."
               disabled={disabled}
               data-flow-name="chat-input"
-              className="w-full px-6 py-5 bg-transparent text-gray-100 placeholder-gray-600 resize-none focus:outline-none disabled:opacity-50 transition-all pr-32"
+              className="w-full px-6 py-5 bg-transparent text-gray-100 placeholder-gray-600 resize-none focus:outline-none disabled:opacity-50 transition-opacity duration-200 pr-32"
               style={{ height: '80px', minHeight: '80px', maxHeight: '200px' }}
-              aria-label="Type your message"
             />
 
             {/* Character count for long messages */}
             {text.length > 500 && (
-              <div className="absolute top-3 right-24 text-xs text-gray-600 font-mono">
+              <div className="absolute top-3 right-24 text-xs text-gray-600 font-mono tabular-nums">
                 {text.length}
               </div>
             )}
@@ -307,14 +266,17 @@ export default function ChatInput({
           <div className="flex items-center justify-between px-4 py-3 bg-gray-900/30 border-t border-gray-800/40">
             {/* Left: Attachment Buttons */}
             <div className="flex items-center gap-2">
+              {/* FIXED: added aria-label, specific transition properties */}
               <button
                 onClick={() => fileInputRef.current?.click()}
                 data-flow-name="btn-attach-image"
-                className="group relative p-2 text-gray-500 hover:text-lime-400 hover:bg-gray-800/60 rounded-xl transition-all duration-200"
-                aria-label="Attach image to message"
+                aria-label="Attach image"
+                className="group relative p-2 text-gray-500 hover:text-lime-400 hover:bg-gray-800/60 rounded-xl transition-[color,background-color] duration-200"
+                title="Attach image"
               >
                 <ImageIcon />
-                <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-gray-800 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-xl">
+                {/* FIXED: added duration */}
+                <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-gray-800 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap pointer-events-none shadow-xl">
                   Add image
                 </span>
               </button>
@@ -325,48 +287,45 @@ export default function ChatInput({
                 multiple
                 onChange={handleFileSelect}
                 className="hidden"
-                aria-label="File upload input for images"
               />
 
+              {/* FIXED: added aria-label, specific transition properties */}
               {onToggleCanvasAttached && (
                 <button
                   onClick={() => {
-                    const hasContent = canvasMode === 'notes'
-                      ? canvasContent.trim()
-                      : drawingSnapshot;
-
-                    if (!hasContent && !isCanvasAttached) {
+                    if (!canvasContent.trim() && !isCanvasAttached) {
                       onOpenCanvas?.()
                     } else {
                       onToggleCanvasAttached()
                     }
                   }}
-                  disabled={
-                    canvasMode === 'notes'
-                      ? !canvasContent.trim() && isCanvasAttached
-                      : !drawingSnapshot && isCanvasAttached
-                  }
+                  disabled={!canvasContent.trim() && isCanvasAttached}
                   data-flow-name="btn-toggle-canvas"
-                  className={`group relative p-2 rounded-xl transition-all duration-200 ${
+                  aria-label={
+                    isCanvasAttached
+                      ? 'Canvas attached'
+                      : canvasContent.trim()
+                        ? 'Attach canvas'
+                        : 'Open canvas'
+                  }
+                  className={`group relative p-2 rounded-xl transition-[color,background-color] duration-200 ${
                     isCanvasAttached
                       ? 'text-lime-400 bg-lime-500/15'
                       : 'text-gray-500 hover:text-lime-400 hover:bg-gray-800/60'
                   } disabled:opacity-30 disabled:cursor-not-allowed`}
-                  aria-label={
+                  title={
                     isCanvasAttached
-                      ? `${canvasMode === 'draw' ? 'Drawing' : 'Canvas'} attached to message`
-                      : (canvasMode === 'notes' ? canvasContent.trim() : drawingSnapshot)
-                        ? `Attach ${canvasMode === 'draw' ? 'drawing' : 'canvas'} to message`
-                        : 'Open canvas editor'
+                      ? 'Canvas attached'
+                      : canvasContent.trim()
+                        ? 'Attach canvas'
+                        : 'Open canvas'
                   }
-                  aria-pressed={isCanvasAttached}
                 >
-                  {canvasMode === 'draw' ? <DrawIcon /> : <CanvasIcon />}
+                  <CanvasIcon />
+                  {/* FIXED: added duration */}
                   {!isCanvasAttached && (
-                    <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-gray-800 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-xl" aria-hidden="true">
-                      {(canvasMode === 'notes' ? canvasContent.trim() : drawingSnapshot)
-                        ? `Attach ${canvasMode === 'draw' ? 'drawing' : 'canvas'}`
-                        : 'Open canvas'}
+                    <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-gray-800 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap pointer-events-none shadow-xl">
+                      {canvasContent.trim() ? 'Attach canvas' : 'Open canvas'}
                     </span>
                   )}
                 </button>
@@ -395,12 +354,12 @@ export default function ChatInput({
                 </div>
               </div>
 
-              {/* Send Button */}
+              {/* Send Button - FIXED: specific transition properties */}
               <button
                 onClick={handleSend}
                 disabled={disabled || (!text.trim() && images.length === 0)}
                 data-flow-name="btn-send"
-                className="group relative px-6 py-2.5 bg-lime-500 hover:bg-lime-400 text-gray-950 rounded-xl font-semibold shadow-lg shadow-lime-500/20 hover:shadow-xl hover:shadow-lime-500/30 disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none transition-all duration-200 disabled:hover:bg-lime-500 flex items-center gap-2"
+                className="group relative px-6 py-2.5 bg-lime-500 hover:bg-lime-400 text-gray-950 rounded-xl font-semibold shadow-lg shadow-lime-500/20 hover:shadow-xl hover:shadow-lime-500/30 disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none transition-[background-color,box-shadow] duration-200 disabled:hover:bg-lime-500 flex items-center gap-2"
               >
                 <span className="text-sm">Send</span>
                 <SendIcon />

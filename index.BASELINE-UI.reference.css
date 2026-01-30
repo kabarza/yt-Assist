@@ -154,63 +154,7 @@ body {
   border-radius: 0;
 }
 
-/* Excalidraw Theme Overrides */
-.excalidraw {
-  --color-primary: #84cc16;
-  --color-primary-darker: #65a30d;
-  --color-primary-darkest: #4d7c0f;
-  --color-primary-light: #a3e635;
-}
-
-.excalidraw .App-menu_top {
-  background-color: #1f2937 !important;
-  border-bottom: 1px solid #374151 !important;
-}
-
-.excalidraw .panelColumn {
-  background-color: #1f2937 !important;
-}
-
-.excalidraw button,
-.excalidraw .ToolIcon {
-  color: #9ca3af !important;
-}
-
-.excalidraw button:hover,
-.excalidraw .ToolIcon:hover {
-  background-color: #374151 !important;
-  color: #84cc16 !important;
-}
-
-.excalidraw .ToolIcon_type_radio.is-active,
-.excalidraw button.active {
-  background-color: rgba(132, 204, 22, 0.15) !important;
-  color: #84cc16 !important;
-}
-
-.excalidraw .Island {
-  background-color: #1f2937 !important;
-  border: 1px solid #374151 !important;
-}
-
-.excalidraw input,
-.excalidraw textarea,
-.excalidraw select {
-  background-color: #111827 !important;
-  color: #f3f4f6 !important;
-  border-color: #374151 !important;
-}
-
-.excalidraw .dropdown-menu {
-  background-color: #1f2937 !important;
-  border: 1px solid #374151 !important;
-}
-
-.excalidraw .dropdown-menu-item:hover {
-  background-color: #374151 !important;
-}
-
-/* Typography utilities */
+/* BASELINE-UI: Typography utilities */
 @layer utilities {
   .text-balance {
     text-wrap: balance;
@@ -221,7 +165,7 @@ body {
   }
 }
 
-/* Respect prefers-reduced-motion */
+/* BASELINE-UI: Respect prefers-reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

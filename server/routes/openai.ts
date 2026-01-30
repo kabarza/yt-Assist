@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import OpenAI from 'openai'
+import { CANVAS_SYSTEM_PROMPT } from '../utils/systemPrompt'
 
 interface ContentPart {
   type: 'text' | 'image'
@@ -59,7 +60,10 @@ openaiRoute.post('/', async (c) => {
       try {
         const response = await client.chat.completions.create({
           model: model || 'gpt-4o',
-          messages: toOpenAIMessages(messages),
+          messages: [
+            { role: 'system', content: CANVAS_SYSTEM_PROMPT },
+            ...toOpenAIMessages(messages),
+          ],
           stream: true,
         })
 
@@ -86,7 +90,10 @@ openaiRoute.post('/', async (c) => {
     try {
       const response = await client.chat.completions.create({
         model: model || 'gpt-4o',
-        messages: toOpenAIMessages(messages),
+        messages: [
+          { role: 'system', content: CANVAS_SYSTEM_PROMPT },
+          ...toOpenAIMessages(messages),
+        ],
       })
 
       const text = response.choices[0]?.message?.content || ''

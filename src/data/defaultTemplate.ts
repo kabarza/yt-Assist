@@ -1,4 +1,55 @@
-import type { TemplateSection } from '../types/template'
+import type { TemplateSection, OutputType } from '../types/template'
+
+export const defaultOutputTypes: OutputType[] = [
+  {
+    id: 'core-hook',
+    name: 'Core Hook',
+    enabled: true,
+    order: 0,
+    quantity: 1,
+    description: 'What the video is REALLY about and why someone should click',
+  },
+  {
+    id: 'descriptions',
+    name: 'YouTube Descriptions',
+    enabled: true,
+    order: 1,
+    quantity: 3,
+    description: 'SEO-optimized descriptions starting with "In this video..."',
+  },
+  {
+    id: 'titles-thumbnails',
+    name: 'Titles + Thumbnails',
+    enabled: true,
+    order: 2,
+    quantity: 10,
+    description: 'Title and thumbnail text pairs for A/B testing',
+  },
+  {
+    id: 'extra-thumbnails',
+    name: 'Extra Thumbnail Texts',
+    enabled: true,
+    order: 3,
+    quantity: 10,
+    description: 'Additional thumbnail text options',
+  },
+  {
+    id: 'chapters',
+    name: 'Chapters',
+    enabled: true,
+    order: 4,
+    quantity: 1,
+    description: 'Timestamped chapters for video navigation',
+  },
+  {
+    id: 'hashtags',
+    name: 'Hashtags',
+    enabled: true,
+    order: 5,
+    quantity: 5,
+    description: 'Relevant hashtags for discovery',
+  },
+]
 
 export const defaultSections: TemplateSection[] = [
   {

@@ -42,7 +42,6 @@ export default function App() {
             initialPrompt={chatState.initialPrompt}
             promptId={chatState.promptId}
             onPromptProcessed={clearInitialPrompt}
-            onClose={() => setActiveTool('packaging')}
           />
         )
       default:

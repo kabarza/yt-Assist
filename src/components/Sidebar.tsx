@@ -33,10 +33,10 @@ const MoreIcon = () => (
 )
 
 const ChevronIcon = ({ expanded }: { expanded: boolean }) => (
-  <svg 
-    className={`w-4 h-4 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} 
-    fill="none" 
-    stroke="currentColor" 
+  <svg
+    className={`w-4 h-4 transition-transform duration-200 ${expanded ? '' : 'rotate-180'}`}
+    fill="none"
+    stroke="currentColor"
     viewBox="0 0 24 24"
   >
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -65,8 +65,19 @@ const tools: Tool[] = [
   },
 ]
 
+const SIDEBAR_EXPANDED_KEY = 'yt-assist-sidebar-expanded'
+
 export default function Sidebar({ activeTool, onToolSelect }: SidebarProps) {
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(() => {
+    const saved = localStorage.getItem(SIDEBAR_EXPANDED_KEY)
+    return saved !== null ? JSON.parse(saved) : true
+  })
+
+  const toggleExpanded = () => {
+    const newValue = !expanded
+    setExpanded(newValue)
+    localStorage.setItem(SIDEBAR_EXPANDED_KEY, JSON.stringify(newValue))
+  }
 
   return (
     <aside 
@@ -81,9 +92,11 @@ export default function Sidebar({ activeTool, onToolSelect }: SidebarProps) {
           <h1 className="text-lg font-bold text-lime-500">YT-Assist</h1>
         )}
         <button
-          onClick={() => setExpanded(!expanded)}
+          onClick={toggleExpanded}
           className="p-2 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
           data-flow-name="sidebar-toggle"
+          aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+          aria-expanded={expanded}
         >
           <ChevronIcon expanded={expanded} />
         </button>

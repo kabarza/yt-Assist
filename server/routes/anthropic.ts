@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import Anthropic from '@anthropic-ai/sdk'
+import { CANVAS_SYSTEM_PROMPT } from '../utils/systemPrompt'
 
 interface ContentPart {
   type: 'text' | 'image'
@@ -66,6 +67,7 @@ anthropicRoute.post('/', async (c) => {
         const response = await client.messages.stream({
           model: model || 'claude-sonnet-4-20250514',
           max_tokens: 8192,
+          system: CANVAS_SYSTEM_PROMPT,
           messages: toAnthropicMessages(messages),
         })
 
@@ -95,6 +97,7 @@ anthropicRoute.post('/', async (c) => {
       const response = await client.messages.create({
         model: model || 'claude-sonnet-4-20250514',
         max_tokens: 8192,
+        system: CANVAS_SYSTEM_PROMPT,
         messages: toAnthropicMessages(messages),
       })
 

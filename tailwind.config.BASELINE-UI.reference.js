@@ -12,6 +12,7 @@ export default {
           500: '#84cc16',
         }
       },
+      // BASELINE-UI: Fixed z-index scale
       zIndex: {
         'dropdown': '10',
         'sticky': '20',
