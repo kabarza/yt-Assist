@@ -46,7 +46,7 @@ export default function App() {
         )
       default:
         return (
-          <div className="flex items-center justify-center h-full text-gray-500">
+          <div className="flex items-center justify-center h-full text-muted-foreground">
             <p>More tools coming soon...</p>
           </div>
         )
@@ -54,7 +54,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-950">
+    <div className="flex h-screen bg-background">
       <Sidebar activeTool={activeTool} onToolSelect={handleToolSelect} />
       <main className="flex-1 overflow-hidden">
         {renderTool()}

@@ -1,11 +1,16 @@
-// Using 'any' types temporarily to avoid complex Excalidraw type imports
-// These will be properly typed at runtime by Excalidraw itself
+// Using 'any' types to avoid complex tldraw type imports
+// These will be properly typed at runtime by tldraw itself
 
 export type CanvasMode = 'notes' | 'draw';
+export type CanvasType = 'notes' | 'instructions' | 'draft' | 'reference';
+
+export interface DrawingCanvasRef {
+  captureImage: () => Promise<string | null>;
+}
 
 export interface DrawingData {
-  elements: readonly any[];
-  appState: any;
+  document: any;  // TLStoreSnapshot format from tldraw
+  session?: any;
 }
 
 export interface CanvasHistoryItem {
@@ -23,6 +28,17 @@ export interface DrawingHistoryItem {
   preview: string;
 }
 
+export interface CanvasChatState {
+  mode: CanvasMode;
+  content: string;
+  history: CanvasHistoryItem[];
+  drawingData: DrawingData | null;
+  drawingSnapshot: string | null;
+  drawingHistory: DrawingHistoryItem[];
+  canvasType: CanvasType;
+  canvasInstructions: string;
+}
+
 export interface CanvasState {
   mode: CanvasMode;
   content: string;
@@ -33,4 +49,6 @@ export interface CanvasState {
   drawingHistory: DrawingHistoryItem[];
   isOpen: boolean;
   width: number;
+  canvasType: CanvasType;
+  canvasInstructions: string;
 }

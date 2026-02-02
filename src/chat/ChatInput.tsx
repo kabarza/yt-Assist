@@ -1,5 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { ContentPart } from '../types/chat'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Send, Image as ImageIcon, X, FileText, Pencil, Globe } from 'lucide-react'
 
 interface ChatInputProps {
   onSend: (content: ContentPart[]) => void
@@ -7,9 +11,13 @@ interface ChatInputProps {
   canvasContent?: string
   canvasMode?: 'notes' | 'draw'
   drawingSnapshot?: string | null
-  isCanvasAttached?: boolean
-  onToggleCanvasAttached?: () => void
+  isNotesAttached?: boolean
+  isDrawingAttached?: boolean
+  onAttachNotes?: () => void
+  onAttachDrawing?: () => void
   onOpenCanvas?: () => void
+  isWebSearchEnabled?: boolean
+  onToggleWebSearch?: () => void
 }
 
 interface AttachedImage {
@@ -18,45 +26,19 @@ interface AttachedImage {
   mimeType: string
 }
 
-const SendIcon = () => (
-  <svg className="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-  </svg>
-)
-
-const ImageIcon = () => (
-  <svg className="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-  </svg>
-)
-
-const CloseIcon = () => (
-  <svg className="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-  </svg>
-)
-
-const CanvasIcon = () => (
-  <svg className="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-  </svg>
-)
-
-const DrawIcon = () => (
-  <svg className="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-  </svg>
-)
-
 export default function ChatInput({
   onSend,
   disabled,
   canvasContent = '',
-  canvasMode = 'notes',
+  canvasMode: _canvasMode = 'notes',
   drawingSnapshot = null,
-  isCanvasAttached = false,
-  onToggleCanvasAttached,
-  onOpenCanvas
+  isNotesAttached = false,
+  isDrawingAttached = false,
+  onAttachNotes,
+  onAttachDrawing,
+  onOpenCanvas,
+  isWebSearchEnabled = false,
+  onToggleWebSearch
 }: ChatInputProps) {
   const [text, setText] = useState('')
   const [images, setImages] = useState<AttachedImage[]>([])
@@ -171,47 +153,47 @@ export default function ChatInput({
   }, [handleSend])
 
   return (
-    <div className="relative border-t border-gray-800/40">
-      {/* Focus indicator on top border */}
-      <div className="absolute inset-x-0 top-0 h-px bg-lime-500/20 opacity-0 transition-opacity duration-200 peer-focus-within:opacity-100" />
-
-      <div className="px-8 pt-6 pb-8 bg-gray-950/95 peer">
-        {/* Canvas Attachment Indicator */}
-        {isCanvasAttached && canvasMode === 'notes' && canvasContent.trim() && (
-          <div className="mb-4 px-4 py-3 bg-lime-500/5 border border-lime-500/20 rounded-2xl flex items-center justify-between group hover:bg-lime-500/8 transition-colors duration-200">
+    <TooltipProvider>
+      <div className="relative border-t border-border">
+        <div className="px-8 pt-6 pb-8 bg-background/95">
+        {/* Notes Attachment Indicator */}
+        {isNotesAttached && canvasContent.trim() && (
+          <div className="mb-4 px-4 py-3 bg-accent/50 border border-border rounded-lg flex items-center justify-between group hover:bg-accent transition-colors duration-200">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-lime-500/10 rounded-lg">
-                <CanvasIcon />
+              <div className="p-2 bg-accent rounded-lg">
+                <FileText className="h-4 w-4" />
               </div>
               <div>
-                <p className="text-sm font-medium text-lime-400">Canvas attached</p>
-                <p className="text-xs text-gray-500 mt-0.5">
+                <p className="text-sm font-medium text-foreground">Notes attached</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
                   {canvasContent.trim().split('\n')[0].substring(0, 60)}
                   {canvasContent.trim().length > 60 ? '...' : ''}
                 </p>
               </div>
             </div>
-            <button
-              onClick={onToggleCanvasAttached}
-              className="p-2 text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 rounded-lg transition-[color,background-color,opacity] duration-200 opacity-0 group-hover:opacity-100"
-              aria-label="Detach canvas from message"
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onAttachNotes}
+              className="h-8 w-8 opacity-0 group-hover:opacity-100"
+              aria-label="Detach notes from message"
             >
-              <CloseIcon />
-            </button>
+              <X className="h-4 w-4" />
+            </Button>
           </div>
         )}
 
         {/* Drawing Attachment Indicator */}
-        {isCanvasAttached && canvasMode === 'draw' && drawingSnapshot && (
-          <div className="mb-4 px-4 py-3 bg-lime-500/5 border border-lime-500/20 rounded-2xl flex items-center justify-between group hover:bg-lime-500/8 transition-colors duration-200">
+        {isDrawingAttached && drawingSnapshot && (
+          <div className="mb-4 px-4 py-3 bg-accent/50 border border-border rounded-lg flex items-center justify-between group hover:bg-accent transition-colors duration-200">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-lime-500/10 rounded-lg">
-                <DrawIcon />
+              <div className="p-2 bg-accent rounded-lg">
+                <Pencil className="h-4 w-4" />
               </div>
               <div className="flex items-center gap-3">
                 <div>
-                  <p className="text-sm font-medium text-lime-400">Drawing attached</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="text-sm font-medium text-foreground">Drawing attached</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
                     Canvas drawing will be sent as image
                   </p>
                 </div>
@@ -219,18 +201,20 @@ export default function ChatInput({
                   <img
                     src={drawingSnapshot}
                     alt="Drawing preview"
-                    className="w-16 h-16 object-cover rounded-lg border border-lime-500/20"
+                    className="w-16 h-16 object-cover rounded-lg border border-border"
                   />
                 )}
               </div>
             </div>
-            <button
-              onClick={onToggleCanvasAttached}
-              className="p-2 text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 rounded-lg transition-[color,background-color,opacity] duration-200 opacity-0 group-hover:opacity-100"
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onAttachDrawing}
+              className="h-8 w-8 opacity-0 group-hover:opacity-100"
               aria-label="Detach drawing from message"
             >
-              <CloseIcon />
-            </button>
+              <X className="h-4 w-4" />
+            </Button>
           </div>
         )}
 
@@ -238,11 +222,11 @@ export default function ChatInput({
         {images.length > 0 && (
           <div className="mb-5">
             <div className="flex items-center gap-2 mb-3">
-              <div className="h-px flex-1 bg-gray-800/50" />
-              <span className="text-xs font-medium text-gray-500 uppercase">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-xs font-medium text-muted-foreground uppercase">
                 {images.length} {images.length === 1 ? 'Image' : 'Images'} Attached
               </span>
-              <div className="h-px flex-1 bg-gray-800/50" />
+              <div className="h-px flex-1 bg-border" />
             </div>
             <div className="flex gap-3 flex-wrap">
               {images.map((img) => (
@@ -250,21 +234,23 @@ export default function ChatInput({
                   key={img.id}
                   className="relative group cursor-pointer"
                 >
-                  <div className="relative overflow-hidden rounded-2xl ring-2 ring-gray-800/50 group-hover:ring-lime-500/30 transition-all">
+                  <div className="relative overflow-hidden rounded-lg ring-2 ring-border group-hover:ring-accent transition-[box-shadow] duration-200">
                     <img
                       src={img.dataUrl}
                       alt="Attached"
                       className="w-24 h-24 object-cover"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                   </div>
-                  <button
+                  <Button
+                    variant="destructive"
+                    size="icon"
                     onClick={() => removeImage(img.id)}
-                    className="absolute -top-2 -right-2 w-7 h-7 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white shadow-xl opacity-0 group-hover:opacity-100 transition-all hover:scale-110 ring-2 ring-gray-950"
+                    className="absolute -top-2 -right-2 h-7 w-7 rounded-full opacity-0 group-hover:opacity-100 transition-[opacity,transform] duration-200 hover:scale-110"
                     aria-label="Remove attached image"
                   >
-                    <CloseIcon />
-                  </button>
+                    <X className="h-4 w-4" />
+                  </Button>
                 </div>
               ))}
             </div>
@@ -273,14 +259,14 @@ export default function ChatInput({
 
         {/* Main Input Container */}
         <div
-          className="relative rounded-2xl bg-gray-900/50 border border-gray-800/60 shadow-2xl focus-within:border-lime-500/40 focus-within:shadow-lime-500/5 transition-all duration-300 overflow-hidden backdrop-blur-sm"
+          className="relative rounded-lg bg-card border border-border shadow-lg focus-within:border-accent transition-[border-color,box-shadow] duration-200 overflow-hidden"
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
           {/* Input Field */}
           <div className="relative">
             <label htmlFor="chat-input" className="sr-only">Chat message</label>
-            <textarea
+            <Textarea
               id="chat-input"
               ref={textareaRef}
               value={text}
@@ -290,34 +276,38 @@ export default function ChatInput({
               placeholder="Ask me anything..."
               disabled={disabled}
               data-flow-name="chat-input"
-              className="w-full px-6 py-5 bg-transparent text-gray-100 placeholder-gray-600 resize-none focus:outline-none disabled:opacity-50 transition-all pr-32"
+              className="w-full px-6 py-5 bg-transparent border-0 resize-none focus-visible:ring-0 pr-32 text-sm"
               style={{ height: '80px', minHeight: '80px', maxHeight: '200px' }}
               aria-label="Type your message"
             />
 
             {/* Character count for long messages */}
             {text.length > 500 && (
-              <div className="absolute top-3 right-24 text-xs text-gray-600 font-mono">
+              <div className="absolute top-3 right-24 text-xs text-muted-foreground font-mono tabular-nums">
                 {text.length}
               </div>
             )}
           </div>
 
           {/* Bottom Toolbar */}
-          <div className="flex items-center justify-between px-4 py-3 bg-gray-900/30 border-t border-gray-800/40">
+          <div className="flex items-center justify-between px-4 py-3 bg-muted/30 border-t border-border">
             {/* Left: Attachment Buttons */}
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                data-flow-name="btn-attach-image"
-                className="group relative p-2 text-gray-500 hover:text-lime-400 hover:bg-gray-800/60 rounded-xl transition-all duration-200"
-                aria-label="Attach image to message"
-              >
-                <ImageIcon />
-                <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-gray-800 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-xl">
-                  Add image
-                </span>
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => fileInputRef.current?.click()}
+                    data-flow-name="btn-attach-image"
+                    className="h-8 w-8"
+                    aria-label="Attach image to message"
+                  >
+                    <ImageIcon className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Add image</TooltipContent>
+              </Tooltip>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -328,67 +318,101 @@ export default function ChatInput({
                 aria-label="File upload input for images"
               />
 
-              {onToggleCanvasAttached && (
-                <button
-                  onClick={() => {
-                    const hasContent = canvasMode === 'notes'
-                      ? canvasContent.trim()
-                      : drawingSnapshot;
+              {onAttachNotes && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={isNotesAttached ? "secondary" : "ghost"}
+                      size="icon"
+                      onClick={() => {
+                        if (!canvasContent.trim()) {
+                          // Open canvas panel if no notes content
+                          onOpenCanvas?.()
+                        } else {
+                          // Toggle attachment
+                          onAttachNotes()
+                        }
+                      }}
+                      data-flow-name="btn-attach-notes"
+                      className="h-8 w-8"
+                      aria-label={isNotesAttached ? "Notes attached to message" : "Attach notes to message"}
+                      aria-pressed={isNotesAttached}
+                    >
+                      <FileText className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {canvasContent.trim() ? (isNotesAttached ? 'Detach notes' : 'Attach notes') : 'Open canvas'}
+                  </TooltipContent>
+                </Tooltip>
+              )}
 
-                    if (!hasContent && !isCanvasAttached) {
-                      onOpenCanvas?.()
-                    } else {
-                      onToggleCanvasAttached()
-                    }
-                  }}
-                  disabled={
-                    canvasMode === 'notes'
-                      ? !canvasContent.trim() && isCanvasAttached
-                      : !drawingSnapshot && isCanvasAttached
-                  }
-                  data-flow-name="btn-toggle-canvas"
-                  className={`group relative p-2 rounded-xl transition-all duration-200 ${
-                    isCanvasAttached
-                      ? 'text-lime-400 bg-lime-500/15'
-                      : 'text-gray-500 hover:text-lime-400 hover:bg-gray-800/60'
-                  } disabled:opacity-30 disabled:cursor-not-allowed`}
-                  aria-label={
-                    isCanvasAttached
-                      ? `${canvasMode === 'draw' ? 'Drawing' : 'Canvas'} attached to message`
-                      : (canvasMode === 'notes' ? canvasContent.trim() : drawingSnapshot)
-                        ? `Attach ${canvasMode === 'draw' ? 'drawing' : 'canvas'} to message`
-                        : 'Open canvas editor'
-                  }
-                  aria-pressed={isCanvasAttached}
-                >
-                  {canvasMode === 'draw' ? <DrawIcon /> : <CanvasIcon />}
-                  {!isCanvasAttached && (
-                    <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-gray-800 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-xl" aria-hidden="true">
-                      {(canvasMode === 'notes' ? canvasContent.trim() : drawingSnapshot)
-                        ? `Attach ${canvasMode === 'draw' ? 'drawing' : 'canvas'}`
-                        : 'Open canvas'}
-                    </span>
-                  )}
-                </button>
+              {onAttachDrawing && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={isDrawingAttached ? "secondary" : "ghost"}
+                      size="icon"
+                      onClick={() => {
+                        if (!drawingSnapshot) {
+                          // Open canvas panel if no drawing
+                          onOpenCanvas?.()
+                        } else {
+                          // Toggle attachment
+                          onAttachDrawing()
+                        }
+                      }}
+                      data-flow-name="btn-attach-drawing"
+                      className="h-8 w-8"
+                      aria-label={isDrawingAttached ? "Drawing attached to message" : "Attach drawing to message"}
+                      aria-pressed={isDrawingAttached}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {drawingSnapshot ? (isDrawingAttached ? 'Detach drawing' : 'Attach drawing') : 'Open canvas'}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+
+              {onToggleWebSearch && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={isWebSearchEnabled ? "secondary" : "ghost"}
+                      size="icon"
+                      onClick={onToggleWebSearch}
+                      className="h-8 w-8"
+                      aria-label={isWebSearchEnabled ? "Web search enabled" : "Enable web search"}
+                      aria-pressed={isWebSearchEnabled}
+                    >
+                      <Globe className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {isWebSearchEnabled ? 'Disable web search' : 'Enable web search'}
+                  </TooltipContent>
+                </Tooltip>
               )}
             </div>
 
             {/* Right: Keyboard Hints & Send Button */}
             <div className="flex items-center gap-4">
               {/* Keyboard shortcuts - hide on mobile */}
-              <div className="hidden sm:flex items-center gap-3 text-xs text-gray-600">
+              <div className="hidden sm:flex items-center gap-3 text-xs text-muted-foreground">
                 <div className="flex items-center gap-1.5">
-                  <kbd className="px-2 py-1 bg-gray-800/80 border border-gray-700/50 rounded-md text-gray-500 font-mono text-[10px] shadow-sm">
+                  <kbd className="px-2 py-1 bg-muted border border-border rounded text-xs font-mono">
                     ↵
                   </kbd>
                   <span>send</span>
                 </div>
-                <div className="w-px h-3 bg-gray-800" />
+                <div className="w-px h-3 bg-border" />
                 <div className="flex items-center gap-1.5">
-                  <kbd className="px-1.5 py-1 bg-gray-800/80 border border-gray-700/50 rounded-md text-gray-500 font-mono text-[10px] shadow-sm">
+                  <kbd className="px-1.5 py-1 bg-muted border border-border rounded text-xs font-mono">
                     ⇧
                   </kbd>
-                  <kbd className="px-2 py-1 bg-gray-800/80 border border-gray-700/50 rounded-md text-gray-500 font-mono text-[10px] shadow-sm">
+                  <kbd className="px-2 py-1 bg-muted border border-border rounded text-xs font-mono">
                     ↵
                   </kbd>
                   <span>line</span>
@@ -396,19 +420,20 @@ export default function ChatInput({
               </div>
 
               {/* Send Button */}
-              <button
+              <Button
                 onClick={handleSend}
                 disabled={disabled || (!text.trim() && images.length === 0)}
                 data-flow-name="btn-send"
-                className="group relative px-6 py-2.5 bg-lime-500 hover:bg-lime-400 text-gray-950 rounded-xl font-semibold shadow-lg shadow-lime-500/20 hover:shadow-xl hover:shadow-lime-500/30 disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none transition-all duration-200 disabled:hover:bg-lime-500 flex items-center gap-2"
+                size="sm"
               >
                 <span className="text-sm">Send</span>
-                <SendIcon />
-              </button>
+                <Send className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         </div>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   )
 }

@@ -1,92 +1,122 @@
-import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
-import { Excalidraw } from '@excalidraw/excalidraw';
-import { exportToBlob } from '@excalidraw/excalidraw';
+import { useEffect, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
+import { Tldraw, useEditor, loadSnapshot, getSnapshot } from 'tldraw';
+import 'tldraw/tldraw.css';
 import { useCanvasStore } from '../stores/canvasStore';
+import type { DrawingCanvasRef } from '../types/canvas';
 
-export const DrawingCanvas = forwardRef((_props, ref) => {
-  const { drawingData, setDrawingData } = useCanvasStore();
-  const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
-  const isInitialLoadRef = useRef(true);
-
-  useImperativeHandle(ref, () => excalidrawAPI);
+// Inner component to access editor via hook
+function DrawingCanvasInner({ onEditorReady }: { onEditorReady: (editor: any) => void }) {
+  const editor = useEditor();
 
   useEffect(() => {
-    if (!excalidrawAPI) return;
-
-    // Restore drawing data on mount
-    if (isInitialLoadRef.current && drawingData) {
-      excalidrawAPI.updateScene({
-        elements: drawingData.elements as any,
-        appState: drawingData.appState,
-      });
-      isInitialLoadRef.current = false;
+    if (editor) {
+      onEditorReady(editor);
     }
-  }, [excalidrawAPI, drawingData]);
+  }, [editor, onEditorReady]);
 
-  const handleChange = (elements: readonly any[], state: any) => {
-    const newData = {
-      elements,
-      appState: {
-        viewBackgroundColor: state.viewBackgroundColor,
-        currentItemStrokeColor: state.currentItemStrokeColor,
-        currentItemBackgroundColor: state.currentItemBackgroundColor,
-        currentItemFillStyle: state.currentItemFillStyle,
-        currentItemStrokeWidth: state.currentItemStrokeWidth,
-        currentItemRoughness: state.currentItemRoughness,
-        currentItemOpacity: state.currentItemOpacity,
-        currentItemFontFamily: state.currentItemFontFamily,
-        currentItemFontSize: state.currentItemFontSize,
-        currentItemTextAlign: state.currentItemTextAlign,
-        currentItemStrokeStyle: state.currentItemStrokeStyle,
-        currentItemRoundness: state.currentItemRoundness,
-      },
+  return null;
+}
+
+export const DrawingCanvas = forwardRef<DrawingCanvasRef>((_props, ref) => {
+  const { drawingData, setDrawingData } = useCanvasStore();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<any>(null);
+
+  // Expose the captureImage method via ref
+  useImperativeHandle(ref, () => ({
+    captureImage: async () => {
+      if (!editorRef.current) {
+        console.error('No editor instance available for capture');
+        return null;
+      }
+
+      try {
+        console.log('Capturing drawing using tldraw native export...');
+
+        // Get all shape IDs from the current page
+        const shapeIds = editorRef.current.getCurrentPageShapeIds();
+
+        if (shapeIds.size === 0) {
+          console.warn('No shapes on canvas to capture');
+          return null;
+        }
+
+        // Use tldraw's built-in toImage method
+        const { blob } = await editorRef.current.toImage([...shapeIds], {
+          format: 'png',
+          background: true,
+          scale: 2, // Higher quality
+        });
+
+        if (!blob) {
+          console.error('Failed to generate image blob');
+          return null;
+        }
+
+        // Convert blob to data URL
+        return new Promise<string | null>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const dataUrl = reader.result as string;
+            console.log('Drawing captured successfully using native export');
+            resolve(dataUrl);
+          };
+          reader.onerror = () => {
+            console.error('Failed to read blob as data URL');
+            resolve(null);
+          };
+          reader.readAsDataURL(blob);
+        });
+      } catch (error) {
+        console.error('Failed to capture drawing:', error);
+        return null;
+      }
+    },
+  }));
+
+  const handleMount = useCallback((editor: any) => {
+    // Store the editor reference for capture
+    editorRef.current = editor;
+
+    // Restore saved data if it exists
+    if (drawingData) {
+      try {
+        // Load snapshot using the correct tldraw v4 API
+        loadSnapshot(editor.store, drawingData);
+      } catch (e) {
+        console.warn('Could not restore drawing data:', e);
+      }
+    }
+
+    // Set default tool to pen (draw)
+    editor.setCurrentTool('draw');
+
+    // Subscribe to changes using the history listener
+    const unsubscribe = editor.store.listen(() => {
+      // Save the store snapshot whenever there's a change
+      try {
+        const snapshot = getSnapshot(editor.store);
+        setDrawingData(snapshot);
+      } catch (e) {
+        console.error('Failed to get snapshot:', e);
+      }
+    });
+
+    // Return cleanup function
+    return () => {
+      if (unsubscribe) unsubscribe();
     };
-    setDrawingData(newData);
-  };
+  }, [drawingData, setDrawingData]);
 
   return (
-    <div className="h-full w-full">
-      <Excalidraw
-        excalidrawAPI={(api) => setExcalidrawAPI(api)}
-        onChange={handleChange}
-        theme="dark"
-        initialData={{
-          elements: drawingData?.elements || [],
-          appState: {
-            ...drawingData?.appState,
-            viewBackgroundColor: '#1a1a1a',
-          },
-        }}
-      />
+    <div ref={containerRef} className="h-full w-full">
+      <Tldraw
+        onMount={handleMount}
+        inferDarkMode
+      >
+        <DrawingCanvasInner onEditorReady={() => {}} />
+      </Tldraw>
     </div>
   );
 });
 
-export const captureDrawingForAI = async (
-  excalidrawAPI: any
-): Promise<string | null> => {
-  if (!excalidrawAPI) return null;
-
-  try {
-    const elements = excalidrawAPI.getSceneElements();
-
-    const blob = await exportToBlob({
-      elements,
-      appState: {
-        exportWithDarkMode: false,
-        exportBackground: true,
-      },
-      files: excalidrawAPI.getFiles(),
-      maxWidthOrHeight: 1024,
-    });
-
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.readAsDataURL(blob);
-    });
-  } catch (error) {
-    console.error('Failed to capture drawing:', error);
-    return null;
-  }
-};

@@ -7,6 +7,9 @@ import ChatInput from './ChatInput'
 import { CanvasPanel } from './CanvasPanel'
 import type { ContentPart, Provider } from '../types/chat'
 import { MODELS, DEFAULT_PROVIDER } from '../types/chat'
+import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { FileText } from 'lucide-react'
 
 interface ChatPageProps {
   initialPrompt?: string
@@ -39,16 +42,22 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
   const {
     mode: canvasMode,
     content: canvasContent,
-    isAttached: isCanvasAttached,
     isOpen: isCanvasOpen,
     width: canvasWidth,
     drawingSnapshot,
-    setIsAttached: setIsCanvasAttached,
+    canvasType,
+    canvasInstructions,
     setIsOpen: setIsCanvasOpen,
     setWidth: setCanvasWidth,
+    setActiveChatId: setCanvasActiveChatId,
+    setMode: setCanvasMode,
     saveSnapshot,
     saveDrawingSnapshot
   } = useCanvasStore()
+
+  const [isNotesAttached, setIsNotesAttached] = useState(false)
+  const [isDrawingAttached, setIsDrawingAttached] = useState(false)
+  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false)
 
   // Create a new chat with initial prompt and send to AI
   useEffect(() => {
@@ -71,8 +80,14 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
     if (activeChatId !== previousChatIdRef.current) {
       isInitialLoadRef.current = true
       previousChatIdRef.current = activeChatId
+      // Update canvas store to use this chat's canvas state
+      setCanvasActiveChatId(activeChatId)
+      // Reset attachment states when switching chats
+      setIsNotesAttached(false)
+      setIsDrawingAttached(false)
+      setIsWebSearchEnabled(false)
     }
-  }, [activeChatId])
+  }, [activeChatId, setCanvasActiveChatId])
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -104,6 +119,7 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
             }]
           }],
           stream: false,
+          webSearch: false,
         }),
       })
 
@@ -142,6 +158,7 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
           model,
           messages: [{ role: 'user', content }],
           stream: true,
+          webSearch: isWebSearchEnabled,
         }),
       })
 
@@ -209,6 +226,7 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
           model: chat.model,
           messages: [...chat.messages, { role: 'user', content }],
           stream: true,
+          webSearch: isWebSearchEnabled,
         }),
       })
 
@@ -259,51 +277,61 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
   const handleSend = async (content: ContentPart[]) => {
     if (!activeChatId || isStreaming) return
 
-    // Prepend canvas content if attached
     let finalContent = content
-    if (isCanvasAttached) {
-      if (canvasMode === 'notes' && canvasContent.trim()) {
-        const canvasBlock: ContentPart = {
-          type: 'text',
-          text: `<canvas>\n${canvasContent}\n</canvas>\n\n`,
-        }
 
-        // Insert canvas before text content
-        const textIndex = content.findIndex(c => c.type === 'text')
-        if (textIndex !== -1) {
-          finalContent = [
-            ...content.slice(0, textIndex),
-            canvasBlock,
-            {
-              type: 'text',
-              text: content[textIndex].text,
-            },
-            ...content.slice(textIndex + 1),
-          ]
-        } else {
-          // No text content, just prepend canvas
-          finalContent = [canvasBlock, ...content]
-        }
-
-        // Auto-save snapshot when sending with canvas attached
-        saveSnapshot()
-      } else if (canvasMode === 'draw' && drawingSnapshot) {
-        const drawingImage: ContentPart = {
-          type: 'image',
-          imageData: drawingSnapshot,
-          mimeType: 'image/png',
-        }
-
-        // Prepend drawing image
-        finalContent = [drawingImage, ...content]
-
-        // Auto-save drawing snapshot when sending
-        saveDrawingSnapshot()
+    // Add notes if attached
+    if (isNotesAttached && canvasContent.trim()) {
+      // Build canvas XML tag with type and instructions attributes
+      const instructionsAttr = canvasInstructions.trim()
+        ? ` instructions="${canvasInstructions.replace(/"/g, '&quot;')}"`
+        : '';
+      const canvasBlock: ContentPart = {
+        type: 'text',
+        text: `<canvas type="${canvasType}"${instructionsAttr}>\n${canvasContent}\n</canvas>\n\n`,
       }
+
+      // Insert canvas before text content
+      const textIndex = content.findIndex(c => c.type === 'text')
+      if (textIndex !== -1) {
+        finalContent = [
+          ...content.slice(0, textIndex),
+          canvasBlock,
+          {
+            type: 'text',
+            text: content[textIndex].text,
+          },
+          ...content.slice(textIndex + 1),
+        ]
+      } else {
+        // No text content, just prepend canvas
+        finalContent = [canvasBlock, ...content]
+      }
+
+      // Auto-save snapshot when sending with notes attached
+      saveSnapshot()
+    }
+
+    // Add drawing if attached
+    if (isDrawingAttached && drawingSnapshot) {
+      const drawingImage: ContentPart = {
+        type: 'image',
+        imageData: drawingSnapshot,
+        mimeType: 'image/png',
+      }
+
+      // Prepend drawing image
+      finalContent = [drawingImage, ...finalContent]
+
+      // Auto-save drawing snapshot when sending
+      saveDrawingSnapshot()
     }
 
     addMessage(activeChatId, 'user', finalContent)
     await sendToAI(activeChatId, finalContent)
+
+    // Reset attachment states after sending
+    setIsNotesAttached(false)
+    setIsDrawingAttached(false)
   }
 
   const handleNewChat = () => {
@@ -338,49 +366,57 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
         {activeChat ? (
           <>
             {/* Header with provider/model selector */}
-            <div className="px-4 py-3 border-b border-gray-800 flex items-center gap-4">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-4">
               <label htmlFor="provider-select" className="sr-only">AI Provider</label>
-              <select
-                id="provider-select"
+              <Select
                 value={activeChat.provider}
-                onChange={(e) => handleProviderChange(e.target.value as Provider)}
-                data-flow-name="provider-select"
-                className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-                aria-label="Select AI provider"
+                onValueChange={(value) => handleProviderChange(value as Provider)}
               >
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic Claude</option>
-              </select>
+                <SelectTrigger
+                  id="provider-select"
+                  className="w-[180px] h-8 text-sm"
+                  data-flow-name="provider-select"
+                  aria-label="Select AI provider"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="openai">OpenAI</SelectItem>
+                  <SelectItem value="anthropic">Anthropic Claude</SelectItem>
+                </SelectContent>
+              </Select>
 
               <label htmlFor="model-select" className="sr-only">AI Model</label>
-              <select
-                id="model-select"
+              <Select
                 value={activeChat.model}
-                onChange={(e) => handleModelChange(e.target.value)}
-                data-flow-name="model-select"
-                className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-                aria-label="Select AI model"
+                onValueChange={handleModelChange}
               >
-                {MODELS[activeChat.provider].map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
+                <SelectTrigger
+                  id="model-select"
+                  className="w-[200px] h-8 text-sm"
+                  data-flow-name="model-select"
+                  aria-label="Select AI model"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MODELS[activeChat.provider].map((m) => (
+                    <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-              <button
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={() => setIsCanvasOpen(!isCanvasOpen)}
-                className={`ml-auto p-2 rounded-lg transition-colors ${
-                  isCanvasOpen
-                    ? 'text-lime-500 bg-lime-500/10'
-                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-                }`}
+                className={`ml-auto h-8 w-8 ${isCanvasOpen ? 'text-foreground bg-accent' : ''}`}
                 aria-label={isCanvasOpen ? 'Close canvas panel' : 'Open canvas panel'}
                 aria-expanded={isCanvasOpen}
                 data-flow-name="btn-toggle-canvas-panel"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </button>
+                <FileText className="h-4 w-4" />
+              </Button>
             </div>
 
             {/* Messages */}
@@ -398,22 +434,49 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
               canvasContent={canvasContent}
               canvasMode={canvasMode}
               drawingSnapshot={drawingSnapshot}
-              isCanvasAttached={isCanvasAttached}
-              onToggleCanvasAttached={() => setIsCanvasAttached(!isCanvasAttached)}
+              isNotesAttached={isNotesAttached}
+              isDrawingAttached={isDrawingAttached}
+              onAttachNotes={() => {
+                if (isNotesAttached) {
+                  // Detach notes
+                  setIsNotesAttached(false)
+                } else if (canvasContent.trim()) {
+                  // Attach notes
+                  setIsNotesAttached(true)
+                  // Switch to notes mode if not already
+                  if (canvasMode !== 'notes') {
+                    setCanvasMode('notes')
+                  }
+                }
+              }}
+              onAttachDrawing={() => {
+                if (isDrawingAttached) {
+                  // Detach drawing
+                  setIsDrawingAttached(false)
+                } else if (drawingSnapshot) {
+                  // Attach drawing
+                  setIsDrawingAttached(true)
+                  // Switch to draw mode if not already
+                  if (canvasMode !== 'draw') {
+                    setCanvasMode('draw')
+                  }
+                }
+              }}
               onOpenCanvas={() => setIsCanvasOpen(true)}
+              isWebSearchEnabled={isWebSearchEnabled}
+              onToggleWebSearch={() => setIsWebSearchEnabled(!isWebSearchEnabled)}
             />
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-500">
+          <div className="flex-1 flex items-center justify-center text-muted-foreground">
             <div className="text-center">
-              <p className="mb-4">Select a chat or start a new one</p>
-              <button
+              <p className="mb-4 text-sm">Select a chat or start a new one</p>
+              <Button
                 onClick={handleNewChat}
                 data-flow-name="btn-new-chat-empty"
-                className="px-4 py-2 bg-lime-500 text-gray-900 rounded-lg font-medium hover:bg-lime-400 transition-colors"
               >
                 New Chat
-              </button>
+              </Button>
             </div>
           </div>
         )}

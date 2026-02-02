@@ -19,6 +19,7 @@ interface ChatRequest {
   model: string
   messages: Message[]
   stream?: boolean
+  webSearch?: boolean
 }
 
 const anthropicRoute = new Hono()

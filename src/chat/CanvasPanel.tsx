@@ -6,6 +6,14 @@ import { Markdown } from 'tiptap-markdown';
 import { useCanvasStore } from '../stores/canvasStore';
 import { DrawingCanvas } from './DrawingCanvas';
 import ConfirmDialog from '../components/ConfirmDialog';
+import type { DrawingCanvasRef } from '../types/canvas';
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { ChevronRight, X, Settings } from 'lucide-react';
 
 interface CanvasPanelProps {
   width: number;
@@ -25,21 +33,25 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
     deleteHistoryItem,
     clearHistory,
     drawingHistory,
-    saveDrawingSnapshot,
     restoreDrawingFromHistory,
     deleteDrawingHistoryItem,
     clearDrawingHistory,
     setDrawingSnapshot,
+    canvasType,
+    canvasInstructions,
+    setCanvasType,
+    setCanvasInstructions,
   } = useCanvasStore();
   const [showHistoryMenu, setShowHistoryMenu] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const historyMenuRef = useRef<HTMLDivElement>(null);
   const lastContentRef = useRef(content);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isUpdatingFromStore = useRef(false);
   const resizeStartRef = useRef({ x: 0, width: 0 });
-  const drawingCanvasRef = useRef<any>(null);
+  const drawingCanvasRef = useRef<DrawingCanvasRef>(null);
 
   const editor = useEditor({
     extensions: [
@@ -116,6 +128,22 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
     }
   }, [showHistoryMenu]);
 
+  // Auto-capture drawing snapshot when in draw mode (debounced)
+  useEffect(() => {
+    if (mode !== 'draw' || !drawingCanvasRef.current) return;
+
+    const captureTimer = setInterval(async () => {
+      if (drawingCanvasRef.current) {
+        const snapshot = await drawingCanvasRef.current.captureImage();
+        if (snapshot) {
+          setDrawingSnapshot(snapshot);
+        }
+      }
+    }, 2000); // Capture every 2 seconds while drawing
+
+    return () => clearInterval(captureTimer);
+  }, [mode, setDrawingSnapshot]);
+
   const formatTimestamp = (timestamp: number) => {
     const date = new Date(timestamp);
     const now = new Date();
@@ -125,6 +153,18 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
       return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     }
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  };
+
+  // Capture drawing snapshot when switching away from draw mode
+  const handleModeChange = async (newMode: 'notes' | 'draw') => {
+    // If switching away from draw mode, capture the current drawing
+    if (mode === 'draw' && newMode === 'notes' && drawingCanvasRef.current) {
+      const snapshot = await drawingCanvasRef.current.captureImage();
+      if (snapshot) {
+        setDrawingSnapshot(snapshot);
+      }
+    }
+    setMode(newMode);
   };
 
   // Resize handlers
@@ -161,294 +201,316 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
 
   return (
     <div
-      className="h-full bg-gray-900 border-l border-gray-800 flex flex-col relative shadow-2xl transition-all duration-300 ease-out"
+      className="h-full bg-muted border-l border-border flex flex-col relative shadow-2xl"
       style={{ width: `${width}px` }}
     >
       {/* Resize Handle */}
       <div
-        className={`absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-lime-500/50 transition-colors ${
-          isResizing ? 'bg-lime-500' : 'bg-transparent'
+        className={`absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent transition-colors duration-200 ${
+          isResizing ? 'bg-accent' : 'bg-transparent'
         }`}
         onMouseDown={handleResizeStart}
       />
 
-      {/* Collapsed Toggle (on left edge) */}
-      <button
-        onClick={onClose}
-        className="absolute -left-8 top-1/2 -translate-y-1/2 w-8 h-16 bg-gray-900 border border-gray-800 border-r-0 rounded-l-lg flex items-center justify-center text-gray-400 hover:text-lime-400 hover:bg-gray-800 transition-all shadow-lg"
-        title="Close canvas"
-      >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
-      </button>
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-gray-800">
+      <div className="flex items-center justify-between p-4 border-b border-border">
         <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold text-gray-100">Canvas</h2>
+          <h2 className="text-lg font-semibold text-foreground text-balance">Canvas</h2>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="h-8 w-8 -ml-1"
+            aria-label="Close canvas panel"
+            title="Close canvas panel"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+
+          {/* Canvas Settings */}
+          <Popover open={showSettings} onOpenChange={setShowSettings}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                aria-label="Canvas settings"
+                title="Canvas settings"
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80" align="start">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <h3 className="font-semibold text-sm">Canvas Settings</h3>
+                  <p className="text-xs text-muted-foreground">Configure how the AI should interpret your canvas content</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="canvas-type" className="text-sm font-medium">
+                    Canvas Type
+                  </Label>
+                  <select
+                    id="canvas-type"
+                    value={canvasType}
+                    onChange={(e) => setCanvasType(e.target.value as any)}
+                    className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    <option value="notes">Notes - Personal thoughts and observations</option>
+                    <option value="instructions">Instructions - Directives to follow</option>
+                    <option value="draft">Draft - Document in progress</option>
+                    <option value="reference">Reference - Background material</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="canvas-instructions" className="text-sm font-medium">
+                    AI Instructions
+                  </Label>
+                  <Textarea
+                    id="canvas-instructions"
+                    value={canvasInstructions}
+                    onChange={(e) => setCanvasInstructions(e.target.value)}
+                    placeholder="Tell the AI how to use this canvas content..."
+                    className="min-h-[100px] text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Provide custom instructions for how the AI should interpret and use this canvas content.
+                  </p>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+
           <div className="relative" ref={historyMenuRef}>
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setShowHistoryMenu(!showHistoryMenu)}
               disabled={mode === 'notes' ? history.length === 0 : drawingHistory.length === 0}
-              className="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="h-7 text-xs"
               title="View history"
             >
               History ({mode === 'notes' ? history.length : drawingHistory.length})
-            </button>
+            </Button>
 
             {showHistoryMenu && mode === 'notes' && history.length > 0 && (
-              <div className="absolute left-0 top-full mt-1 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50 max-h-96 overflow-y-auto">
-                <div className="p-2 border-b border-gray-700 flex items-center justify-between">
-                  <span className="text-xs font-medium text-gray-300">Snapshots</span>
-                  <button
+              <ScrollArea className="absolute left-0 top-full mt-1 w-64 bg-popover border border-border rounded-lg shadow-lg z-dropdown max-h-96">
+                <div className="p-2 border-b border-border flex items-center justify-between">
+                  <span className="text-xs font-medium text-foreground">Snapshots</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setShowClearConfirm(true)}
-                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                    className="h-6 text-xs text-destructive hover:text-destructive"
                     aria-label="Clear all history"
                   >
                     Clear all
-                  </button>
+                  </Button>
                 </div>
                 {history.map((item) => (
                   <div
                     key={item.id}
-                    className="p-2 border-b border-gray-700 last:border-b-0 hover:bg-gray-700 transition-colors group"
+                    className="p-2 border-b border-border last:border-b-0 hover:bg-accent transition-colors duration-200 group"
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <button
+                      <Button
+                        variant="ghost"
                         onClick={() => {
                           restoreFromHistory(item.id);
                           setShowHistoryMenu(false);
                         }}
-                        className="flex-1 text-left"
+                        className="flex-1 text-left h-auto p-0 justify-start"
                       >
-                        <div className="text-xs text-gray-400 mb-1">
-                          {formatTimestamp(item.timestamp)}
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">
+                            {formatTimestamp(item.timestamp)}
+                          </div>
+                          <div className="text-sm text-foreground truncate">
+                            {item.preview || '(empty)'}
+                          </div>
                         </div>
-                        <div className="text-sm text-gray-200 truncate">
-                          {item.preview || '(empty)'}
-                        </div>
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => deleteHistoryItem(item.id)}
-                        className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 transition-all"
+                        className="opacity-0 group-hover:opacity-100 h-6 w-6 text-destructive hover:text-destructive"
                         title="Delete"
                       >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
+                        <X className="h-3 w-3" />
+                      </Button>
                     </div>
                   </div>
                 ))}
-              </div>
+              </ScrollArea>
             )}
 
             {showHistoryMenu && mode === 'draw' && drawingHistory.length > 0 && (
-              <div className="absolute left-0 top-full mt-1 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50 max-h-96 overflow-y-auto">
-                <div className="p-2 border-b border-gray-700 flex items-center justify-between">
-                  <span className="text-xs font-medium text-gray-300">Drawings</span>
-                  <button
+              <ScrollArea className="absolute left-0 top-full mt-1 w-64 bg-popover border border-border rounded-lg shadow-lg z-dropdown max-h-96">
+                <div className="p-2 border-b border-border flex items-center justify-between">
+                  <span className="text-xs font-medium text-foreground">Drawings</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => {
                       if (confirm('Clear all drawing history?')) {
                         clearDrawingHistory();
                         setShowHistoryMenu(false);
                       }
                     }}
-                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                    className="h-6 text-xs text-destructive hover:text-destructive"
                   >
                     Clear all
-                  </button>
+                  </Button>
                 </div>
                 {drawingHistory.map((item) => (
                   <div
                     key={item.id}
-                    className="p-2 border-b border-gray-700 last:border-b-0 hover:bg-gray-700 transition-colors group"
+                    className="p-2 border-b border-border last:border-b-0 hover:bg-accent transition-colors duration-200 group"
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <button
+                      <Button
+                        variant="ghost"
                         onClick={() => {
                           restoreDrawingFromHistory(item.id);
                           setShowHistoryMenu(false);
                         }}
-                        className="flex-1 text-left"
+                        className="flex-1 text-left h-auto p-0 justify-start"
                       >
-                        <div className="text-xs text-gray-400 mb-1">
-                          {formatTimestamp(item.timestamp)}
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">
+                            {formatTimestamp(item.timestamp)}
+                          </div>
+                          <div className="text-sm text-foreground truncate">
+                            {item.preview}
+                          </div>
+                          {item.snapshot && (
+                            <img
+                              src={item.snapshot}
+                              alt="Drawing preview"
+                              className="mt-1 w-full h-16 object-cover rounded border border-border"
+                            />
+                          )}
                         </div>
-                        <div className="text-sm text-gray-200 truncate">
-                          {item.preview}
-                        </div>
-                        {item.snapshot && (
-                          <img
-                            src={item.snapshot}
-                            alt="Drawing preview"
-                            className="mt-1 w-full h-16 object-cover rounded border border-gray-600"
-                          />
-                        )}
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => deleteDrawingHistoryItem(item.id)}
-                        className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 transition-all"
+                        className="opacity-0 group-hover:opacity-100 h-6 w-6 text-destructive hover:text-destructive"
                         title="Delete"
                       >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
+                        <X className="h-3 w-3" />
+                      </Button>
                     </div>
                   </div>
                 ))}
-              </div>
+              </ScrollArea>
             )}
           </div>
         </div>
       </div>
 
       {/* Mode Tabs */}
-      <div className="flex border-b border-gray-800 bg-gray-900">
-        <button
-          onClick={() => setMode('notes')}
-          className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
-            mode === 'notes'
-              ? 'text-lime-400 border-b-2 border-lime-400 bg-gray-800'
-              : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-          }`}
-        >
-          Notes
-        </button>
-        <button
-          onClick={() => setMode('draw')}
-          className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
-            mode === 'draw'
-              ? 'text-lime-400 border-b-2 border-lime-400 bg-gray-800'
-              : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-          }`}
-        >
-          Draw
-        </button>
-      </div>
-
-      {/* Capture Button for Draw Mode */}
-      {mode === 'draw' && (
-        <div className="px-3 py-2 border-b border-gray-800 bg-gray-900">
-          <button
-            onClick={async () => {
-              const { captureDrawingForAI } = await import('./DrawingCanvas');
-              const snapshot = await captureDrawingForAI(drawingCanvasRef.current);
-              if (snapshot) {
-                setDrawingSnapshot(snapshot);
-                saveDrawingSnapshot();
-              }
-            }}
-            className="w-full px-3 py-1.5 bg-lime-600 hover:bg-lime-700 text-white text-sm font-medium rounded transition-colors"
-          >
-            Capture for AI
-          </button>
-        </div>
-      )}
+      <Tabs value={mode} onValueChange={(value) => handleModeChange(value as 'notes' | 'draw')} className="border-b border-border">
+        <TabsList className="flex-1 h-auto rounded-none bg-transparent p-0 w-full">
+          <TabsTrigger value="notes" className="flex-1 rounded-none data-[state=active]:border-b-2 data-[state=active]:border-primary">
+            Notes
+          </TabsTrigger>
+          <TabsTrigger value="draw" className="flex-1 rounded-none data-[state=active]:border-b-2 data-[state=active]:border-primary">
+            Draw
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {/* Editor Toolbar */}
       {mode === 'notes' && editor && (
-        <div className="px-3 py-1.5 border-b border-gray-800 flex items-center gap-0.5 flex-wrap bg-gray-900">
-          <button
+        <div className="px-3 py-1.5 border-b border-border flex items-center gap-0.5 flex-wrap bg-muted/30">
+          <Button
+            variant={editor.isActive('bold') ? 'secondary' : 'ghost'}
+            size="sm"
             onClick={() => editor.chain().focus().toggleBold().run()}
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
-              editor.isActive('bold')
-                ? 'bg-lime-600 text-white'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-            }`}
+            className="h-7 px-2 text-xs"
             title="Bold (Cmd+B)"
           >
             <strong>B</strong>
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={editor.isActive('italic') ? 'secondary' : 'ghost'}
+            size="sm"
             onClick={() => editor.chain().focus().toggleItalic().run()}
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
-              editor.isActive('italic')
-                ? 'bg-lime-600 text-white'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-            }`}
+            className="h-7 px-2 text-xs"
             title="Italic (Cmd+I)"
           >
             <em>I</em>
-          </button>
-          <div className="w-px h-5 bg-gray-700 mx-0.5" />
-          <button
+          </Button>
+          <div className="w-px h-5 bg-border mx-0.5" />
+          <Button
+            variant={editor.isActive('heading', { level: 1 }) ? 'secondary' : 'ghost'}
+            size="sm"
             onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
-              editor.isActive('heading', { level: 1 })
-                ? 'bg-lime-600 text-white'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-            }`}
+            className="h-7 px-2 text-xs"
             title="Heading 1"
           >
             H1
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={editor.isActive('heading', { level: 2 }) ? 'secondary' : 'ghost'}
+            size="sm"
             onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
-              editor.isActive('heading', { level: 2 })
-                ? 'bg-lime-600 text-white'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-            }`}
+            className="h-7 px-2 text-xs"
             title="Heading 2"
           >
             H2
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={editor.isActive('heading', { level: 3 }) ? 'secondary' : 'ghost'}
+            size="sm"
             onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
-              editor.isActive('heading', { level: 3 })
-                ? 'bg-lime-600 text-white'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-            }`}
+            className="h-7 px-2 text-xs"
             title="Heading 3"
           >
             H3
-          </button>
-          <div className="w-px h-5 bg-gray-700 mx-0.5" />
-          <button
+          </Button>
+          <div className="w-px h-5 bg-border mx-0.5" />
+          <Button
+            variant={editor.isActive('bulletList') ? 'secondary' : 'ghost'}
+            size="sm"
             onClick={() => editor.chain().focus().toggleBulletList().run()}
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
-              editor.isActive('bulletList')
-                ? 'bg-lime-600 text-white'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-            }`}
+            className="h-7 px-2 text-xs"
             title="Bullet List"
           >
             • List
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={editor.isActive('orderedList') ? 'secondary' : 'ghost'}
+            size="sm"
             onClick={() => editor.chain().focus().toggleOrderedList().run()}
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
-              editor.isActive('orderedList')
-                ? 'bg-lime-600 text-white'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-            }`}
+            className="h-7 px-2 text-xs"
             title="Numbered List"
           >
             1. List
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={editor.isActive('codeBlock') ? 'secondary' : 'ghost'}
+            size="sm"
             onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
-              editor.isActive('codeBlock')
-                ? 'bg-lime-600 text-white'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-            }`}
+            className="h-7 px-2 text-xs"
             title="Code Block"
           >
             {'</>'}
-          </button>
+          </Button>
         </div>
       )}
 
       {/* Content Area */}
-      <div className="flex-1 overflow-hidden bg-gray-800">
+      <div className="flex-1 overflow-hidden bg-card">
         {mode === 'notes' ? (
-          <div className="h-full overflow-y-auto">
+          <ScrollArea className="h-full">
             <EditorContent editor={editor} className="h-full" />
-          </div>
+          </ScrollArea>
         ) : (
           <DrawingCanvas ref={drawingCanvasRef} />
         )}

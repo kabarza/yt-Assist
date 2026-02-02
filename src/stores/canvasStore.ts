@@ -1,20 +1,17 @@
 import { create } from 'zustand';
-import { CanvasHistoryItem, CanvasState, DrawingData, DrawingHistoryItem } from '../types/canvas';
+import { CanvasHistoryItem, CanvasState, DrawingData, DrawingHistoryItem, CanvasChatState, CanvasType } from '../types/canvas';
 
-const CANVAS_CONTENT_KEY = 'yt-assist-canvas-content';
-const CANVAS_HISTORY_KEY = 'yt-assist-canvas-history';
-const CANVAS_ATTACHED_KEY = 'yt-assist-canvas-attached';
+const CANVAS_CHATS_KEY = 'yt-assist-canvas-chats';
 const CANVAS_OPEN_KEY = 'yt-assist-canvas-open';
 const CANVAS_WIDTH_KEY = 'yt-assist-canvas-width';
-const CANVAS_MODE_KEY = 'yt-assist-canvas-mode';
-const CANVAS_DRAWING_DATA_KEY = 'yt-assist-canvas-drawing-data';
-const CANVAS_DRAWING_SNAPSHOT_KEY = 'yt-assist-canvas-drawing-snapshot';
-const CANVAS_DRAWING_HISTORY_KEY = 'yt-assist-canvas-drawing-history';
 const MAX_HISTORY_ITEMS = 20;
 
 interface CanvasStore extends CanvasState {
   isOpen: boolean;
   width: number;
+  activeChatId: string | null;
+  chatStates: Record<string, CanvasChatState>;
+  setActiveChatId: (chatId: string | null) => void;
   setContent: (content: string) => void;
   setIsAttached: (isAttached: boolean) => void;
   setIsOpen: (isOpen: boolean) => void;
@@ -22,6 +19,8 @@ interface CanvasStore extends CanvasState {
   setMode: (mode: 'notes' | 'draw') => void;
   setDrawingData: (data: DrawingData | null) => void;
   setDrawingSnapshot: (snapshot: string | null) => void;
+  setCanvasType: (type: CanvasType) => void;
+  setCanvasInstructions: (instructions: string) => void;
   captureDrawingForAI: () => Promise<void>;
   saveSnapshot: () => void;
   restoreFromHistory: (id: string) => void;
@@ -50,25 +49,89 @@ const saveToStorage = (key: string, value: any) => {
   }
 };
 
+const createEmptyChatState = (): CanvasChatState => ({
+  mode: 'notes',
+  content: '',
+  history: [],
+  drawingData: null,
+  drawingSnapshot: null,
+  drawingHistory: [],
+  canvasType: 'draft',
+  canvasInstructions: 'This is the data from the document that we are working on',
+});
+
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
-  mode: loadFromStorage(CANVAS_MODE_KEY, 'notes'),
-  content: loadFromStorage(CANVAS_CONTENT_KEY, ''),
-  isAttached: loadFromStorage(CANVAS_ATTACHED_KEY, false),
-  history: loadFromStorage(CANVAS_HISTORY_KEY, []),
-  drawingData: loadFromStorage(CANVAS_DRAWING_DATA_KEY, null),
-  drawingSnapshot: loadFromStorage(CANVAS_DRAWING_SNAPSHOT_KEY, null),
-  drawingHistory: loadFromStorage(CANVAS_DRAWING_HISTORY_KEY, []),
+  // Global UI state
   isOpen: loadFromStorage(CANVAS_OPEN_KEY, false),
   width: loadFromStorage(CANVAS_WIDTH_KEY, 400),
+  isAttached: false,
+  activeChatId: null,
+  chatStates: loadFromStorage(CANVAS_CHATS_KEY, {}),
+
+  // Current chat state (defaults)
+  mode: 'notes',
+  content: '',
+  history: [],
+  drawingData: null,
+  drawingSnapshot: null,
+  drawingHistory: [],
+  canvasType: 'draft',
+  canvasInstructions: 'This is the data from the document that we are working on',
+
+  setActiveChatId: (chatId: string | null) => {
+    const { chatStates, activeChatId: currentChatId } = get();
+
+    // Save current chat state before switching
+    if (currentChatId) {
+      const currentState = get();
+      chatStates[currentChatId] = {
+        mode: currentState.mode,
+        content: currentState.content,
+        history: currentState.history,
+        drawingData: currentState.drawingData,
+        drawingSnapshot: currentState.drawingSnapshot,
+        drawingHistory: currentState.drawingHistory,
+        canvasType: currentState.canvasType,
+        canvasInstructions: currentState.canvasInstructions,
+      };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
+
+    // Load new chat state
+    if (chatId) {
+      const chatState = chatStates[chatId] || createEmptyChatState();
+      set({
+        activeChatId: chatId,
+        mode: chatState.mode,
+        content: chatState.content,
+        history: chatState.history,
+        drawingData: chatState.drawingData,
+        drawingSnapshot: chatState.drawingSnapshot,
+        drawingHistory: chatState.drawingHistory,
+        canvasType: chatState.canvasType,
+        canvasInstructions: chatState.canvasInstructions,
+        isAttached: false, // Reset attachment state when switching chats
+      });
+    } else {
+      set({
+        activeChatId: null,
+        ...createEmptyChatState(),
+        isAttached: false,
+      });
+    }
+  },
 
   setContent: (content: string) => {
     set({ content });
-    saveToStorage(CANVAS_CONTENT_KEY, content);
+    const { activeChatId, chatStates } = get();
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], content };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
   },
 
   setIsAttached: (isAttached: boolean) => {
     set({ isAttached });
-    saveToStorage(CANVAS_ATTACHED_KEY, isAttached);
   },
 
   setIsOpen: (isOpen: boolean) => {
@@ -83,17 +146,29 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
   setMode: (mode: 'notes' | 'draw') => {
     set({ mode });
-    saveToStorage(CANVAS_MODE_KEY, mode);
+    const { activeChatId, chatStates } = get();
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], mode };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
   },
 
   setDrawingData: (data: DrawingData | null) => {
     set({ drawingData: data });
-    saveToStorage(CANVAS_DRAWING_DATA_KEY, data);
+    const { activeChatId, chatStates } = get();
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], drawingData: data };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
   },
 
   setDrawingSnapshot: (snapshot: string | null) => {
     set({ drawingSnapshot: snapshot });
-    saveToStorage(CANVAS_DRAWING_SNAPSHOT_KEY, snapshot);
+    const { activeChatId, chatStates } = get();
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], drawingSnapshot: snapshot };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
   },
 
   captureDrawingForAI: async () => {
@@ -102,7 +177,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   },
 
   saveSnapshot: () => {
-    const { content, history } = get();
+    const { content, history, activeChatId, chatStates } = get();
 
     // Skip if content is empty
     if (!content.trim()) {
@@ -124,7 +199,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     const newHistory = [newItem, ...history].slice(0, MAX_HISTORY_ITEMS);
     set({ history: newHistory });
-    saveToStorage(CANVAS_HISTORY_KEY, newHistory);
+
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], history: newHistory };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
   },
 
   restoreFromHistory: (id: string) => {
@@ -136,19 +215,28 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   },
 
   deleteHistoryItem: (id: string) => {
-    const { history } = get();
+    const { history, activeChatId, chatStates } = get();
     const newHistory = history.filter((h) => h.id !== id);
     set({ history: newHistory });
-    saveToStorage(CANVAS_HISTORY_KEY, newHistory);
+
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], history: newHistory };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
   },
 
   clearHistory: () => {
+    const { activeChatId, chatStates } = get();
     set({ history: [] });
-    saveToStorage(CANVAS_HISTORY_KEY, []);
+
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], history: [] };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
   },
 
   saveDrawingSnapshot: () => {
-    const { drawingData, drawingSnapshot, drawingHistory } = get();
+    const { drawingData, drawingSnapshot, drawingHistory, activeChatId, chatStates } = get();
 
     if (!drawingData || !drawingSnapshot) {
       return;
@@ -173,7 +261,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     const newHistory = [newItem, ...drawingHistory].slice(0, MAX_HISTORY_ITEMS);
     set({ drawingHistory: newHistory });
-    saveToStorage(CANVAS_DRAWING_HISTORY_KEY, newHistory);
+
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], drawingHistory: newHistory };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
   },
 
   restoreDrawingFromHistory: (id: string) => {
@@ -186,14 +278,41 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   },
 
   deleteDrawingHistoryItem: (id: string) => {
-    const { drawingHistory } = get();
+    const { drawingHistory, activeChatId, chatStates } = get();
     const newHistory = drawingHistory.filter((h) => h.id !== id);
     set({ drawingHistory: newHistory });
-    saveToStorage(CANVAS_DRAWING_HISTORY_KEY, newHistory);
+
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], drawingHistory: newHistory };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
   },
 
   clearDrawingHistory: () => {
+    const { activeChatId, chatStates } = get();
     set({ drawingHistory: [] });
-    saveToStorage(CANVAS_DRAWING_HISTORY_KEY, []);
+
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], drawingHistory: [] };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
+  },
+
+  setCanvasType: (type: CanvasType) => {
+    set({ canvasType: type });
+    const { activeChatId, chatStates } = get();
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], canvasType: type };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
+  },
+
+  setCanvasInstructions: (instructions: string) => {
+    set({ canvasInstructions: instructions });
+    const { activeChatId, chatStates } = get();
+    if (activeChatId) {
+      chatStates[activeChatId] = { ...chatStates[activeChatId], canvasInstructions: instructions };
+      saveToStorage(CANVAS_CHATS_KEY, chatStates);
+    }
   },
 }));

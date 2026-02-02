@@ -19,6 +19,7 @@ interface ChatRequest {
   model: string
   messages: Message[]
   stream?: boolean
+  webSearch?: boolean
 }
 
 const openaiRoute = new Hono()
@@ -51,15 +52,22 @@ openaiRoute.post('/', async (c) => {
   }
 
   const body = await c.req.json<ChatRequest>()
-  const { model, messages, stream = true } = body
+  const { model, messages, stream = true, webSearch = false } = body
 
   const client = new OpenAI({ apiKey })
 
   if (stream) {
     return streamSSE(c, async (sseStream) => {
       try {
+        // Use search-enabled model if web search is requested
+        const modelToUse = webSearch
+          ? (model || 'gpt-4o').includes('mini')
+            ? 'gpt-4o-mini-search-preview'
+            : 'gpt-4o-search-preview'
+          : model || 'gpt-4o'
+
         const response = await client.chat.completions.create({
-          model: model || 'gpt-4o',
+          model: modelToUse,
           messages: [
             { role: 'system', content: CANVAS_SYSTEM_PROMPT },
             ...toOpenAIMessages(messages),
@@ -88,8 +96,15 @@ openaiRoute.post('/', async (c) => {
     })
   } else {
     try {
+      // Use search-enabled model if web search is requested
+      const modelToUse = webSearch
+        ? (model || 'gpt-4o').includes('mini')
+          ? 'gpt-4o-mini-search-preview'
+          : 'gpt-4o-search-preview'
+        : model || 'gpt-4o'
+
       const response = await client.chat.completions.create({
-        model: model || 'gpt-4o',
+        model: modelToUse,
         messages: [
           { role: 'system', content: CANVAS_SYSTEM_PROMPT },
           ...toOpenAIMessages(messages),
