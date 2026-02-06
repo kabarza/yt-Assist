@@ -1,39 +1,67 @@
-import { useState, useEffect, useCallback } from 'react'
-import type { Chat, Message, Provider, ContentPart } from '../types/chat'
+import { create } from 'zustand'
+import type { Chat, Message, Provider, ContentPart, Citation } from '../types/chat'
 import { generateId, generateTitle, MODELS, DEFAULT_PROVIDER } from '../types/chat'
 
 const STORAGE_KEY = 'yt-assist-chats'
 
-export function useChatStore() {
-  const [chats, setChats] = useState<Chat[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved) {
-        return JSON.parse(saved)
-      }
-    } catch {
-      // Ignore errors
-    }
+// ---------------------------------------------------------------------------
+// Persistence helpers
+// ---------------------------------------------------------------------------
+function loadChats(): Chat[] {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    return saved ? JSON.parse(saved) : []
+  } catch {
     return []
-  })
+  }
+}
 
-  const [activeChatId, setActiveChatId] = useState<string | null>(null)
+function saveChats(chats: Chat[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(chats))
+  } catch {
+    // ignore
+  }
+}
 
-  // Save to localStorage whenever chats change
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(chats))
-    } catch {
-      // Ignore errors
-    }
-  }, [chats])
+// ---------------------------------------------------------------------------
+// Store shape
+// ---------------------------------------------------------------------------
+interface ChatStore {
+  chats: Chat[]
+  activeChatId: string | null
+  activeChat: Chat | null
 
-  const activeChat = chats.find(c => c.id === activeChatId) || null
+  setActiveChatId: (id: string | null) => void
+  createChat: (provider?: Provider, initialMessage?: string) => string
+  deleteChat: (id: string) => void
 
-  const createChat = useCallback((
-    provider: Provider = DEFAULT_PROVIDER,
-    initialMessage?: string
-  ): string => {
+  addMessage: (chatId: string, role: 'user' | 'assistant', content: ContentPart[]) => string
+  appendToMessage: (chatId: string, messageId: string, text: string) => void
+  setCitations: (chatId: string, messageId: string, citations: Citation[]) => void
+
+  setProvider: (chatId: string, provider: Provider) => void
+  setModel: (chatId: string, model: string) => void
+  setTitle: (chatId: string, title: string) => void
+}
+
+// ---------------------------------------------------------------------------
+// Store
+// ---------------------------------------------------------------------------
+export const useChatStore = create<ChatStore>((set, get) => ({
+  chats: loadChats(),
+  activeChatId: null,
+  activeChat: null,
+
+  setActiveChatId: (id) => {
+    const { chats } = get()
+    set({
+      activeChatId: id,
+      activeChat: id ? (chats.find(c => c.id === id) ?? null) : null,
+    })
+  },
+
+  createChat: (provider = DEFAULT_PROVIDER, initialMessage?) => {
     const id = generateId()
     const model = MODELS[provider][0].id
     const messages: Message[] = []
@@ -57,25 +85,24 @@ export function useChatStore() {
       updatedAt: Date.now(),
     }
 
-    setChats(prev => [newChat, ...prev])
-    setActiveChatId(id)
+    const chats = [newChat, ...get().chats]
+    saveChats(chats)
+    set({ chats, activeChatId: id, activeChat: newChat })
     return id
-  }, [])
+  },
 
-  const deleteChat = useCallback((id: string) => {
-    setChats(prev => prev.filter(c => c.id !== id))
-    if (activeChatId === id) {
-      setActiveChatId(null)
-    }
-  }, [activeChatId])
+  deleteChat: (id) => {
+    const chats = get().chats.filter(c => c.id !== id)
+    saveChats(chats)
+    const activeChatId = get().activeChatId === id ? null : get().activeChatId
+    set({
+      chats,
+      activeChatId,
+      activeChat: activeChatId ? (chats.find(c => c.id === activeChatId) ?? null) : null,
+    })
+  },
 
-  const updateChat = useCallback((id: string, updates: Partial<Chat>) => {
-    setChats(prev => prev.map(c => 
-      c.id === id ? { ...c, ...updates, updatedAt: Date.now() } : c
-    ))
-  }, [])
-
-  const addMessage = useCallback((chatId: string, role: 'user' | 'assistant', content: ContentPart[]) => {
+  addMessage: (chatId, role, content) => {
     const message: Message = {
       id: generateId(),
       role,
@@ -83,35 +110,29 @@ export function useChatStore() {
       timestamp: Date.now(),
     }
 
-    setChats(prev => prev.map(c => {
+    const chats = get().chats.map(c => {
       if (c.id !== chatId) return c
-      
       const messages = [...c.messages, message]
+      const firstTitleText = content.find(
+        p => p.type === 'text' && p.text && !p.text.trimStart().startsWith('<canvas')
+      )?.text
       const title = c.messages.length === 0 && role === 'user'
-        ? generateTitle(content.find(p => p.type === 'text')?.text || 'New Chat')
+        ? generateTitle(firstTitleText || 'New Chat')
         : c.title
-
       return { ...c, messages, title, updatedAt: Date.now() }
-    }))
+    })
+
+    saveChats(chats)
+    set({
+      chats,
+      activeChat: chats.find(c => c.id === get().activeChatId) ?? null,
+    })
 
     return message.id
-  }, [])
+  },
 
-  const updateMessage = useCallback((chatId: string, messageId: string, content: ContentPart[]) => {
-    setChats(prev => prev.map(c => {
-      if (c.id !== chatId) return c
-      return {
-        ...c,
-        messages: c.messages.map(m => 
-          m.id === messageId ? { ...m, content } : m
-        ),
-        updatedAt: Date.now(),
-      }
-    }))
-  }, [])
-
-  const appendToMessage = useCallback((chatId: string, messageId: string, text: string) => {
-    setChats(prev => prev.map(c => {
+  appendToMessage: (chatId, messageId, text) => {
+    const chats = get().chats.map(c => {
       if (c.id !== chatId) return c
       return {
         ...c,
@@ -123,46 +144,73 @@ export function useChatStore() {
               ...m,
               content: [
                 ...m.content.slice(0, -1),
-                { ...lastPart, text: (lastPart.text || '') + text }
-              ]
+                { ...lastPart, text: (lastPart.text || '') + text },
+              ],
             }
           }
-          return {
-            ...m,
-            content: [...m.content, { type: 'text', text }]
-          }
+          return { ...m, content: [...m.content, { type: 'text' as const, text }] }
         }),
         updatedAt: Date.now(),
       }
-    }))
-  }, [])
+    })
 
-  const setProvider = useCallback((chatId: string, provider: Provider) => {
+    saveChats(chats)
+    set({
+      chats,
+      activeChat: chats.find(c => c.id === get().activeChatId) ?? null,
+    })
+  },
+
+  setCitations: (chatId, messageId, citations) => {
+    const chats = get().chats.map(c => {
+      if (c.id !== chatId) return c
+      return {
+        ...c,
+        messages: c.messages.map(m =>
+          m.id === messageId ? { ...m, citations } : m
+        ),
+        updatedAt: Date.now(),
+      }
+    })
+
+    saveChats(chats)
+    set({
+      chats,
+      activeChat: chats.find(c => c.id === get().activeChatId) ?? null,
+    })
+  },
+
+  setProvider: (chatId, provider) => {
     const model = MODELS[provider][0].id
-    updateChat(chatId, { provider, model })
-  }, [updateChat])
+    const chats = get().chats.map(c =>
+      c.id === chatId ? { ...c, provider, model, updatedAt: Date.now() } : c
+    )
+    saveChats(chats)
+    set({
+      chats,
+      activeChat: chats.find(c => c.id === get().activeChatId) ?? null,
+    })
+  },
 
-  const setModel = useCallback((chatId: string, model: string) => {
-    updateChat(chatId, { model })
-  }, [updateChat])
+  setModel: (chatId, model) => {
+    const chats = get().chats.map(c =>
+      c.id === chatId ? { ...c, model, updatedAt: Date.now() } : c
+    )
+    saveChats(chats)
+    set({
+      chats,
+      activeChat: chats.find(c => c.id === get().activeChatId) ?? null,
+    })
+  },
 
-  const setTitle = useCallback((chatId: string, title: string) => {
-    updateChat(chatId, { title })
-  }, [updateChat])
-
-  return {
-    chats,
-    activeChatId,
-    activeChat,
-    setActiveChatId,
-    createChat,
-    deleteChat,
-    updateChat,
-    addMessage,
-    updateMessage,
-    appendToMessage,
-    setProvider,
-    setModel,
-    setTitle,
-  }
-}
+  setTitle: (chatId, title) => {
+    const chats = get().chats.map(c =>
+      c.id === chatId ? { ...c, title, updatedAt: Date.now() } : c
+    )
+    saveChats(chats)
+    set({
+      chats,
+      activeChat: chats.find(c => c.id === get().activeChatId) ?? null,
+    })
+  },
+}))

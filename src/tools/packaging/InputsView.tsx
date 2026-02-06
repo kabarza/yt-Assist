@@ -127,8 +127,8 @@ export default function InputsView({
             </div>
 
             {/* Name Options */}
-            <div className="p-3 bg-card border border-border rounded-lg">
-              <div className="flex items-center gap-3 mb-2">
+            <div className="px-3 py-2 bg-card border border-border rounded-lg">
+              <div className={cn("flex items-center gap-3", userInputs.includeName && "mb-2")}>
                 <Switch
                   id="includeName"
                   checked={userInputs.includeName}
@@ -146,7 +146,6 @@ export default function InputsView({
                   onChange={(e) => updateField('nameForTitles', e.target.value)}
                   placeholder="Enter the name to include..."
                   data-flow-name="input-name-for-titles"
-                  className="mt-2"
                 />
               )}
             </div>

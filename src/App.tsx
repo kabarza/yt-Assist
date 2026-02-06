@@ -2,20 +2,29 @@ import { useState, useCallback } from 'react'
 import Sidebar from './components/Sidebar'
 import PackagingTool from './tools/packaging/PackagingTool'
 import ChatPage from './chat/ChatPage'
+import { useChatStore } from './stores/chatStore'
+import { DEFAULT_PROVIDER } from './types/chat'
 
 export type ToolId = 'packaging' | 'chat' | 'coming-soon'
 
 export interface ChatNavigationState {
   initialPrompt?: string
-  promptId?: string // Unique ID to prevent duplicate processing
+  promptId?: string
 }
 
 export default function App() {
   const [activeTool, setActiveTool] = useState<ToolId>('packaging')
   const [chatState, setChatState] = useState<ChatNavigationState>({})
 
+  const {
+    chats,
+    activeChatId,
+    setActiveChatId,
+    createChat,
+    deleteChat,
+  } = useChatStore()
+
   const handleNavigateToChat = useCallback((prompt?: string) => {
-    // Generate unique ID for this prompt to prevent duplicates
     const promptId = prompt ? `${Date.now()}-${Math.random()}` : undefined
     setChatState({ initialPrompt: prompt, promptId })
     setActiveTool('chat')
@@ -27,9 +36,14 @@ export default function App() {
 
   const handleToolSelect = (tool: ToolId) => {
     if (tool !== 'chat') {
-      setChatState({}) // Clear chat state when switching away
+      setChatState({})
     }
     setActiveTool(tool)
+  }
+
+  const handleNewChat = () => {
+    createChat(DEFAULT_PROVIDER)
+    setActiveTool('chat')
   }
 
   const renderTool = () => {
@@ -54,8 +68,16 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-background">
-      <Sidebar activeTool={activeTool} onToolSelect={handleToolSelect} />
+    <div className="flex h-dvh bg-background">
+      <Sidebar
+        activeTool={activeTool}
+        onToolSelect={handleToolSelect}
+        chats={chats}
+        activeChatId={activeChatId}
+        onSelectChat={setActiveChatId}
+        onNewChat={handleNewChat}
+        onDeleteChat={deleteChat}
+      />
       <main className="flex-1 overflow-hidden">
         {renderTool()}
       </main>

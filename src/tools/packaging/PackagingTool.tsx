@@ -92,12 +92,6 @@ export default function PackagingTool({ onSendToChat }: PackagingToolProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <header className="px-6 py-4 border-b border-border bg-card">
-        <h2 className="text-xl font-bold text-foreground text-balance">YouTube Packaging Tool</h2>
-        <p className="text-sm text-muted-foreground text-pretty">Generate high-CTR titles, thumbnails, descriptions, and more</p>
-      </header>
-
       {/* Tabs */}
       <div className="flex items-center justify-between gap-1 px-6 py-3 border-b border-border bg-secondary/30">
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabId)} className="flex-1">

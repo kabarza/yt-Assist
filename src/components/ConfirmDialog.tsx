@@ -44,7 +44,7 @@ export default function ConfirmDialog({
       <DialogContent>
         <DialogHeader>
           <div className="flex items-center gap-4 mb-2">
-            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+            <div className="flex-shrink-0 size-10 rounded-full bg-muted flex items-center justify-center">
               <AlertTriangle className="w-5 h-5 text-muted-foreground" />
             </div>
             <DialogTitle>{title}</DialogTitle>

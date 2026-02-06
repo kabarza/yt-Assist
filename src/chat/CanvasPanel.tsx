@@ -8,12 +8,16 @@ import { DrawingCanvas } from './DrawingCanvas';
 import ConfirmDialog from '../components/ConfirmDialog';
 import type { DrawingCanvasRef } from '../types/canvas';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { ChevronRight, X, Settings } from 'lucide-react';
+import { ChevronRight, X, Settings, Clock } from 'lucide-react';
 
 interface CanvasPanelProps {
   width: number;
@@ -44,6 +48,7 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
   } = useCanvasStore();
   const [showHistoryMenu, setShowHistoryMenu] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showDrawingClearConfirm, setShowDrawingClearConfirm] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const historyMenuRef = useRef<HTMLDivElement>(null);
@@ -75,7 +80,7 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-invert max-w-none focus:outline-none h-full p-3',
+        class: 'prose prose-invert max-w-none focus:outline-none h-full p-4',
       },
     },
   });
@@ -201,102 +206,139 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
 
   return (
     <div
-      className="h-full bg-muted border-l border-border flex flex-col relative shadow-2xl"
+      className="h-full bg-card border-l border-border flex flex-col relative shadow-2xl"
       style={{ width: `${width}px` }}
     >
       {/* Resize Handle */}
       <div
-        className={`absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent transition-colors duration-200 ${
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize canvas panel"
+        tabIndex={0}
+        className={`absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent transition-colors duration-200 focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
           isResizing ? 'bg-accent' : 'bg-transparent'
         }`}
         onMouseDown={handleResizeStart}
+        onKeyDown={(e) => {
+          const step = e.shiftKey ? 20 : 10
+          if (e.key === 'ArrowLeft') {
+            e.preventDefault()
+            onWidthChange(Math.min(600, width + step))
+          } else if (e.key === 'ArrowRight') {
+            e.preventDefault()
+            onWidthChange(Math.max(300, width - step))
+          }
+        }}
       />
 
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      {/* Header — single consolidated bar */}
+      <div className="flex items-center justify-between px-3 h-11 border-b border-border bg-card">
+        {/* Left: close arrow + mode pills */}
         <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold text-foreground text-balance">Canvas</h2>
           <Button
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="h-8 w-8 -ml-1"
+            className="h-7 w-7"
             aria-label="Close canvas panel"
             title="Close canvas panel"
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
 
+          <div className="flex gap-0.5 p-0.5 bg-[hsl(0,0%,8%)] rounded-md">
+            <button
+              type="button"
+              onClick={() => handleModeChange('notes')}
+              className={`px-2.5 py-0.5 text-xs font-medium rounded transition-colors duration-150 ${
+                mode === 'notes'
+                  ? 'bg-[hsl(0,0%,18%)] text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Notes
+            </button>
+            <button
+              type="button"
+              onClick={() => handleModeChange('draw')}
+              className={`px-2.5 py-0.5 text-xs font-medium rounded transition-colors duration-150 ${
+                mode === 'draw'
+                  ? 'bg-[hsl(0,0%,18%)] text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Draw
+            </button>
+          </div>
+        </div>
+
+        {/* Right: settings + history icons */}
+        <div className="flex items-center gap-0.5">
           {/* Canvas Settings */}
-          <Popover open={showSettings} onOpenChange={setShowSettings}>
-            <PopoverTrigger asChild>
+          <DropdownMenu open={showSettings} onOpenChange={setShowSettings}>
+            <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-7 w-7"
                 aria-label="Canvas settings"
                 title="Canvas settings"
               >
-                <Settings className="h-4 w-4" />
+                <Settings className="h-3.5 w-3.5" />
               </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-80" align="start">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <h3 className="font-semibold text-sm">Canvas Settings</h3>
-                  <p className="text-xs text-muted-foreground">Configure how the AI should interpret your canvas content</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="canvas-type" className="text-sm font-medium">
-                    Canvas Type
-                  </Label>
-                  <select
-                    id="canvas-type"
-                    value={canvasType}
-                    onChange={(e) => setCanvasType(e.target.value as any)}
-                    className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  >
-                    <option value="notes">Notes - Personal thoughts and observations</option>
-                    <option value="instructions">Instructions - Directives to follow</option>
-                    <option value="draft">Draft - Document in progress</option>
-                    <option value="reference">Reference - Background material</option>
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="canvas-instructions" className="text-sm font-medium">
-                    AI Instructions
-                  </Label>
-                  <Textarea
-                    id="canvas-instructions"
-                    value={canvasInstructions}
-                    onChange={(e) => setCanvasInstructions(e.target.value)}
-                    placeholder="Tell the AI how to use this canvas content..."
-                    className="min-h-[100px] text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Provide custom instructions for how the AI should interpret and use this canvas content.
-                  </p>
-                </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72">
+              <div className="p-3">
+                <Label htmlFor="canvas-type" className="text-xs text-muted-foreground">
+                  Canvas Type
+                </Label>
+                <select
+                  id="canvas-type"
+                  value={canvasType}
+                  onChange={(e) => setCanvasType(e.target.value as any)}
+                  className="mt-1.5 w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <option value="notes">Notes - Personal thoughts</option>
+                  <option value="instructions">Instructions - Directives to follow</option>
+                  <option value="draft">Draft - Document in progress</option>
+                  <option value="reference">Reference - Background material</option>
+                </select>
               </div>
-            </PopoverContent>
-          </Popover>
+              <DropdownMenuSeparator />
+              <div className="p-3">
+                <Label htmlFor="canvas-instructions" className="text-xs text-muted-foreground">
+                  AI Instructions
+                </Label>
+                <Textarea
+                  id="canvas-instructions"
+                  value={canvasInstructions}
+                  onChange={(e) => setCanvasInstructions(e.target.value)}
+                  placeholder="Tell the AI how to use this canvas content..."
+                  className="mt-1.5 min-h-[80px] text-sm"
+                />
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Custom instructions for how the AI should interpret this canvas content.
+                </p>
+              </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
+          {/* History */}
           <div className="relative" ref={historyMenuRef}>
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               onClick={() => setShowHistoryMenu(!showHistoryMenu)}
               disabled={mode === 'notes' ? history.length === 0 : drawingHistory.length === 0}
-              className="h-7 text-xs"
+              className="h-7 w-7"
+              aria-label="View history"
               title="View history"
             >
-              History ({mode === 'notes' ? history.length : drawingHistory.length})
+              <Clock className="h-3.5 w-3.5" />
             </Button>
 
             {showHistoryMenu && mode === 'notes' && history.length > 0 && (
-              <ScrollArea className="absolute left-0 top-full mt-1 w-64 bg-popover border border-border rounded-lg shadow-lg z-dropdown max-h-96">
+              <ScrollArea className="absolute right-0 top-full mt-1 w-64 bg-popover border border-border rounded-lg shadow-lg z-dropdown max-h-96">
                 <div className="p-2 border-b border-border flex items-center justify-between">
                   <span className="text-xs font-medium text-foreground">Snapshots</span>
                   <Button
@@ -337,7 +379,7 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
                         size="icon"
                         onClick={() => deleteHistoryItem(item.id)}
                         className="opacity-0 group-hover:opacity-100 h-6 w-6 text-destructive hover:text-destructive"
-                        title="Delete"
+                        aria-label="Delete this snapshot"
                       >
                         <X className="h-3 w-3" />
                       </Button>
@@ -348,19 +390,15 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
             )}
 
             {showHistoryMenu && mode === 'draw' && drawingHistory.length > 0 && (
-              <ScrollArea className="absolute left-0 top-full mt-1 w-64 bg-popover border border-border rounded-lg shadow-lg z-dropdown max-h-96">
+              <ScrollArea className="absolute right-0 top-full mt-1 w-64 bg-popover border border-border rounded-lg shadow-lg z-dropdown max-h-96">
                 <div className="p-2 border-b border-border flex items-center justify-between">
                   <span className="text-xs font-medium text-foreground">Drawings</span>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => {
-                      if (confirm('Clear all drawing history?')) {
-                        clearDrawingHistory();
-                        setShowHistoryMenu(false);
-                      }
-                    }}
+                    onClick={() => setShowDrawingClearConfirm(true)}
                     className="h-6 text-xs text-destructive hover:text-destructive"
+                    aria-label="Clear all drawing history"
                   >
                     Clear all
                   </Button>
@@ -400,7 +438,7 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
                         size="icon"
                         onClick={() => deleteDrawingHistoryItem(item.id)}
                         className="opacity-0 group-hover:opacity-100 h-6 w-6 text-destructive hover:text-destructive"
-                        title="Delete"
+                        aria-label="Delete this drawing"
                       >
                         <X className="h-3 w-3" />
                       </Button>
@@ -413,98 +451,6 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
         </div>
       </div>
 
-      {/* Mode Tabs */}
-      <Tabs value={mode} onValueChange={(value) => handleModeChange(value as 'notes' | 'draw')} className="border-b border-border">
-        <TabsList className="flex-1 h-auto rounded-none bg-transparent p-0 w-full">
-          <TabsTrigger value="notes" className="flex-1 rounded-none data-[state=active]:border-b-2 data-[state=active]:border-primary">
-            Notes
-          </TabsTrigger>
-          <TabsTrigger value="draw" className="flex-1 rounded-none data-[state=active]:border-b-2 data-[state=active]:border-primary">
-            Draw
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
-
-      {/* Editor Toolbar */}
-      {mode === 'notes' && editor && (
-        <div className="px-3 py-1.5 border-b border-border flex items-center gap-0.5 flex-wrap bg-muted/30">
-          <Button
-            variant={editor.isActive('bold') ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => editor.chain().focus().toggleBold().run()}
-            className="h-7 px-2 text-xs"
-            title="Bold (Cmd+B)"
-          >
-            <strong>B</strong>
-          </Button>
-          <Button
-            variant={editor.isActive('italic') ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => editor.chain().focus().toggleItalic().run()}
-            className="h-7 px-2 text-xs"
-            title="Italic (Cmd+I)"
-          >
-            <em>I</em>
-          </Button>
-          <div className="w-px h-5 bg-border mx-0.5" />
-          <Button
-            variant={editor.isActive('heading', { level: 1 }) ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-            className="h-7 px-2 text-xs"
-            title="Heading 1"
-          >
-            H1
-          </Button>
-          <Button
-            variant={editor.isActive('heading', { level: 2 }) ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-            className="h-7 px-2 text-xs"
-            title="Heading 2"
-          >
-            H2
-          </Button>
-          <Button
-            variant={editor.isActive('heading', { level: 3 }) ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-            className="h-7 px-2 text-xs"
-            title="Heading 3"
-          >
-            H3
-          </Button>
-          <div className="w-px h-5 bg-border mx-0.5" />
-          <Button
-            variant={editor.isActive('bulletList') ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => editor.chain().focus().toggleBulletList().run()}
-            className="h-7 px-2 text-xs"
-            title="Bullet List"
-          >
-            • List
-          </Button>
-          <Button
-            variant={editor.isActive('orderedList') ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => editor.chain().focus().toggleOrderedList().run()}
-            className="h-7 px-2 text-xs"
-            title="Numbered List"
-          >
-            1. List
-          </Button>
-          <Button
-            variant={editor.isActive('codeBlock') ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-            className="h-7 px-2 text-xs"
-            title="Code Block"
-          >
-            {'</>'}
-          </Button>
-        </div>
-      )}
-
       {/* Content Area */}
       <div className="flex-1 overflow-hidden bg-card">
         {mode === 'notes' ? (
@@ -516,24 +462,34 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
         )}
       </div>
 
-      {/* Confirm Dialog */}
+      {/* Confirm Dialogs */}
       <ConfirmDialog
         isOpen={showClearConfirm}
-        title="Clear All History?"
+        title="Clear All Snapshots?"
         message="This will permanently delete all canvas history snapshots. This action cannot be undone."
         confirmLabel="Clear All"
         cancelLabel="Cancel"
         variant="danger"
         onConfirm={() => {
-          if (mode === 'notes') {
-            clearHistory();
-          } else {
-            clearDrawingHistory();
-          }
+          clearHistory();
           setShowHistoryMenu(false);
           setShowClearConfirm(false);
         }}
         onCancel={() => setShowClearConfirm(false)}
+      />
+      <ConfirmDialog
+        isOpen={showDrawingClearConfirm}
+        title="Clear All Drawings?"
+        message="This will permanently delete all drawing history. This action cannot be undone."
+        confirmLabel="Clear All"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={() => {
+          clearDrawingHistory();
+          setShowHistoryMenu(false);
+          setShowDrawingClearConfirm(false);
+        }}
+        onCancel={() => setShowDrawingClearConfirm(false)}
       />
     </div>
   );

@@ -7,10 +7,18 @@ export interface ContentPart {
   mimeType?: string
 }
 
+export interface Citation {
+  title: string
+  url: string
+  start_index: number
+  end_index: number
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: ContentPart[]
+  citations?: Citation[]
   timestamp: number
 }
 
@@ -62,5 +70,5 @@ export function generateId(): string {
 export function generateTitle(firstMessage: string): string {
   // Take first 50 chars of first message as title
   const cleaned = firstMessage.replace(/\s+/g, ' ').trim()
-  return cleaned.length > 50 ? cleaned.slice(0, 47) + '...' : cleaned
+  return cleaned.length > 50 ? cleaned.slice(0, 47) + '…' : cleaned
 }
