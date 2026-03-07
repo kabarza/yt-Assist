@@ -1,0 +1,63 @@
+{
+  "schema_version": 2,
+  "id": "yt-assist",
+  "name": "YT-Assist",
+  "kind": "app",
+  "area": "work",
+  "status": "active",
+  "parent_id": null,
+  "summary": "YouTube helper app with packaging tools and an AI chat interface backed by a Hono server.",
+  "tags": [
+    "youtube",
+    "assistant",
+    "chat"
+  ],
+  "stack": [
+    "react",
+    "vite",
+    "typescript",
+    "hono",
+    "tailwindcss"
+  ],
+  "commands": {
+    "install": "npm install",
+    "dev": "npm run dev:all",
+    "build": "npm run build",
+    "preview": "npm run preview",
+    "test": null,
+    "lint": null,
+    "typecheck": null
+  },
+  "runtime": {
+    "host": null,
+    "frontend_port": null,
+    "api_port": 3000,
+    "preview_port": null,
+    "canonical_base_url": null,
+    "slot": null
+  },
+  "favicon": {
+    "path": null,
+    "status": "missing"
+  },
+  "links": {
+    "readme": "README.md",
+    "status": "docs/STATUS.md",
+    "tasks": "docs/TASKS.md",
+    "ideas": "docs/IDEAS.md",
+    "report": "docs/REPORT.md",
+    "legacy": [
+      "plan/README.md",
+      "plan/THE-GREAT-REPORT.md",
+      "plan/THE-GREAT-TODO.md"
+    ]
+  },
+  "validation": {
+    "last_checked": "2026-03-06",
+    "docs_contract_status": "compliant",
+    "hierarchy_status": "root",
+    "runtime_metadata_status": "legacy",
+    "readme_matches_runtime": true
+  },
+  "last_reviewed": "2026-03-06"
+}

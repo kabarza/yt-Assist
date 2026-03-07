@@ -20,6 +20,11 @@ interface ChatRequest {
   messages: Message[]
   stream?: boolean
   webSearch?: boolean
+  systemPrompt?: string
+  endpointOverride?: {
+    baseUrl?: string
+    apiKey?: string
+  }
 }
 
 const anthropicRoute = new Hono()
@@ -52,15 +57,21 @@ function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
 }
 
 anthropicRoute.post('/', async (c) => {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  const body = await c.req.json<ChatRequest>()
+  const overrideApiKey = body.endpointOverride?.apiKey?.trim()
+  const overrideBaseUrl = body.endpointOverride?.baseUrl?.trim()
+  const apiKey = overrideApiKey || process.env.ANTHROPIC_API_KEY || (overrideBaseUrl ? 'local-proxy-key' : '')
+
   if (!apiKey) {
     return c.json({ error: 'ANTHROPIC_API_KEY not configured' }, 500)
   }
 
-  const body = await c.req.json<ChatRequest>()
-  const { model, messages, stream = true } = body
+  const { model, messages, stream = true, systemPrompt } = body
 
-  const client = new Anthropic({ apiKey })
+  const client = new Anthropic({
+    apiKey,
+    ...(overrideBaseUrl ? { baseURL: overrideBaseUrl } : {}),
+  })
 
   if (stream) {
     return streamSSE(c, async (sseStream) => {
@@ -68,7 +79,7 @@ anthropicRoute.post('/', async (c) => {
         const response = await client.messages.stream({
           model: model || 'claude-sonnet-4-20250514',
           max_tokens: 8192,
-          system: CANVAS_SYSTEM_PROMPT,
+          system: systemPrompt || CANVAS_SYSTEM_PROMPT,
           messages: toAnthropicMessages(messages),
         })
 
@@ -98,7 +109,7 @@ anthropicRoute.post('/', async (c) => {
       const response = await client.messages.create({
         model: model || 'claude-sonnet-4-20250514',
         max_tokens: 8192,
-        system: CANVAS_SYSTEM_PROMPT,
+        system: systemPrompt || CANVAS_SYSTEM_PROMPT,
         messages: toAnthropicMessages(messages),
       })
 

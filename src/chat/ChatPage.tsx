@@ -1,36 +1,66 @@
 import { useEffect, useRef, useState } from 'react'
 import { useChatStore } from '../stores/chatStore'
 import { useCanvasStore } from '../stores/canvasStore'
+import { useOnlineStatus } from '../hooks/useOnlineStatus'
+import { useOfflineQueue } from '../stores/offlineQueueStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { useIsMobile } from '../hooks/useMediaQuery'
 import ChatMessage from './ChatMessage'
 import ChatInput from './ChatInput'
 import { CanvasPanel } from './CanvasPanel'
+import MobileHeader from '../components/MobileHeader'
 import WelcomeScreen from './WelcomeScreen'
+import SystemPromptDialog from './SystemPromptDialog'
+import PinnedMessagesPanel from './PinnedMessagesPanel'
+import ComparisonView, { type ComparisonResponse } from '../components/ComparisonView'
+import ComparisonModeSelector, { type ComparisonModel } from '../components/ComparisonModeSelector'
+import TitleVariantsView, { type TitleVariant } from '../components/TitleVariantsView'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import type { ContentPart, Provider } from '../types/chat'
-import { MODELS, DEFAULT_PROVIDER } from '../types/chat'
-import { ChevronLeft } from 'lucide-react'
+import { MODELS } from '../types/chat'
+import { ChevronLeft, Pin } from 'lucide-react'
+import { toast } from 'sonner'
+import { extractTitle, generateTitleVariants } from '../utils/titleVariants'
+import { requestChatText, streamChatCompletion, type ChatRequestMessage } from '../utils/apiClient'
 
 interface ChatPageProps {
-  initialPrompt?: string
+  initialChatId?: string
   promptId?: string
   onPromptProcessed?: () => void
+  onRegisterFocusInput?: (focusFn: () => void) => void
+  onToggleSidebar?: () => void
 }
 
-export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }: ChatPageProps) {
+export default function ChatPage({ initialChatId, promptId, onPromptProcessed, onRegisterFocusInput, onToggleSidebar }: ChatPageProps) {
+  const isMobile = useIsMobile()
   const {
     chats,
     activeChat,
     activeChatId,
+    setActiveChatId,
     createChat,
+    forkChat,
     addMessage,
     appendToMessage,
     setCitations,
+    updateMessage,
+    removeMessage,
     setProvider,
     setModel,
     setTitle,
+    setSystemPrompt,
+    togglePinMessage,
   } = useChatStore()
 
+  const { isOnline } = useOnlineStatus()
+  const { addToQueue } = useOfflineQueue()
+  const { settings } = useSettingsStore()
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messageRefsMap = useRef<Map<string, HTMLDivElement>>(new Map())
   const [isStreaming, setIsStreaming] = useState(false)
+  const [abortController, setAbortController] = useState<AbortController | null>(null)
   const processedPromptIdRef = useRef<string | null>(null)
   const titleGeneratedRef = useRef<Set<string>>(new Set())
   const isInitialLoadRef = useRef(true)
@@ -55,16 +85,49 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
   const [isNotesAttached, setIsNotesAttached] = useState(false)
   const [isDrawingAttached, setIsDrawingAttached] = useState(false)
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false)
+  const [isSystemPromptDialogOpen, setIsSystemPromptDialogOpen] = useState(false)
+  const [isPinnedPanelOpen, setIsPinnedPanelOpen] = useState(false)
 
-  // Create a new chat with initial prompt and send to AI
+  // Comparison mode state
+  const [isComparisonMode, setIsComparisonMode] = useState(false)
+  const [comparisonModels, setComparisonModels] = useState<ComparisonModel[]>([
+    { provider: 'anthropic', model: MODELS.anthropic[0].id },
+    { provider: 'openai', model: MODELS.openai[0].id },
+  ])
+  const [comparisonResponses, setComparisonResponses] = useState<ComparisonResponse[]>([])
+  const [showComparisonView, setShowComparisonView] = useState(false)
+
+  // Title variants state
+  const [titleVariants, setTitleVariants] = useState<TitleVariant[]>([])
+  const [showTitleVariants, setShowTitleVariants] = useState(false)
+  const [isGeneratingVariants, setIsGeneratingVariants] = useState(false)
+  const defaultProvider = settings.defaultProvider
+  const defaultModel = MODELS[defaultProvider].some((entry) => entry.id === settings.defaultModel)
+    ? settings.defaultModel
+    : MODELS[defaultProvider][0].id
+
+  // Auto-detach notes if content is cleared while attached
   useEffect(() => {
-    if (initialPrompt && promptId && processedPromptIdRef.current !== promptId) {
+    if (isNotesAttached && !canvasContent.trim()) {
+      setIsNotesAttached(false)
+    }
+  }, [canvasContent, isNotesAttached])
+
+  // Auto-detach drawing if snapshot is cleared while attached
+  useEffect(() => {
+    if (isDrawingAttached && !drawingSnapshot) {
+      setIsDrawingAttached(false)
+    }
+  }, [drawingSnapshot, isDrawingAttached])
+
+  // Auto-send a newly created chat from another tool exactly once.
+  useEffect(() => {
+    if (initialChatId && promptId && processedPromptIdRef.current !== promptId) {
       processedPromptIdRef.current = promptId
-      const chatId = createChat(DEFAULT_PROVIDER, initialPrompt)
-      sendToAIWithChat(chatId, DEFAULT_PROVIDER, MODELS[DEFAULT_PROVIDER][0].id, [{ type: 'text', text: initialPrompt }], true)
+      void sendToAI(initialChatId)
       onPromptProcessed?.()
     }
-  }, [initialPrompt, promptId])
+  }, [initialChatId, promptId, onPromptProcessed])
 
   // Track chat switches
   useEffect(() => {
@@ -105,155 +168,111 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
     titleGeneratedRef.current.add(chatId)
 
     try {
-      const endpoint = `/api/chat/${provider}`
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages: [{
-            role: 'user',
-            content: [{
-              type: 'text',
-              text: `Based on this message, generate a 3-4 word title that describes what this video/content is about. Reply with ONLY the title, nothing else. No quotes, no punctuation at the end.\n\nMessage:\n${userMessage.slice(0, 1000)}`
-            }]
+      const result = await requestChatText({
+        provider,
+        model,
+        messages: [{
+          role: 'user',
+          content: [{
+            type: 'text',
+            text: `Based on this message, generate a 3-4 word title that describes what this video/content is about. Reply with ONLY the title, nothing else. No quotes, no punctuation at the end.\n\nMessage:\n${userMessage.slice(0, 1000)}`,
           }],
-          stream: false,
-          webSearch: false,
-        }),
+        }],
       })
 
-      if (response.ok) {
-        const data = await response.json()
-        if (data.text) {
-          setTitle(chatId, data.text.trim().slice(0, 50))
-        }
+      if (result.text) {
+        setTitle(chatId, result.text.trim().slice(0, 50))
       }
     } catch {
       // Silently fail
     }
   }
 
-  const sendToAIWithChat = async (
+  const toRequestMessages = (messages: { role: 'user' | 'assistant'; content: ContentPart[] }[]): ChatRequestMessage[] =>
+    messages.map((message) => ({
+      role: message.role,
+      content: message.content,
+    }))
+
+  const queueChatRequest = (
     chatId: string,
     provider: Provider,
     model: string,
-    content: ContentPart[],
-    shouldGenerateTitle = false
+    messages: ChatRequestMessage[],
+    systemPrompt?: string
   ) => {
-    if (isStreaming) return
-    setIsStreaming(true)
-
-    const assistantMessageId = addMessage(chatId, 'assistant', [{ type: 'text', text: '' }])
-
-    try {
-      const response = await fetch(`/api/chat/${provider}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content }],
-          stream: true,
-          webSearch: isWebSearchEnabled,
-        }),
-      })
-
-      if (!response.ok) throw new Error(`API error: ${response.status}`)
-
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
-      if (!reader) throw new Error('No response body')
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        for (const line of decoder.decode(value).split('\n')) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6))
-              if (data.type === 'delta' && data.text) {
-                appendToMessage(chatId, assistantMessageId, data.text)
-              } else if (data.type === 'citations' && data.citations) {
-                setCitations(chatId, assistantMessageId, data.citations)
-              } else if (data.type === 'error') {
-                appendToMessage(chatId, assistantMessageId, `\n\nError: ${data.error}`)
-              }
-            } catch { /* ignore parse errors */ }
-          }
-        }
-      }
-
-      if (shouldGenerateTitle) {
-        const userText = getTitleSeedText(content)
-        if (userText) {
-          generateChatTitle(chatId, provider, model, userText)
-        }
-      }
-    } catch (error) {
-      appendToMessage(chatId, assistantMessageId, `Error: ${error}`)
-    } finally {
-      setIsStreaming(false)
-    }
+    addToQueue({
+      chatId,
+      provider,
+      model,
+      messages,
+      webSearch: isWebSearchEnabled,
+      systemPrompt,
+    })
+    toast.info('Message queued', {
+      description: 'Will be sent when connection is restored',
+    })
   }
 
-  const sendToAI = async (chatId: string, content: ContentPart[]) => {
-    const chat = chats.find(c => c.id === chatId)
+  const sendToAI = async (chatId: string) => {
+    if (isStreaming) return
+
+    const chat = useChatStore.getState().chats.find(c => c.id === chatId)
     if (!chat) return
 
-    const isFirstMessage = chat.messages.length <= 1
+    const messages = toRequestMessages(chat.messages)
+
+    if (!isOnline) {
+      queueChatRequest(chatId, chat.provider, chat.model, messages, chat.systemPrompt)
+      return
+    }
+
+    const isFirstMessage = chat.messages.length === 1 && chat.messages[0]?.role === 'user'
+    const latestUserMessage = [...chat.messages].reverse().find((message) => message.role === 'user')
     setIsStreaming(true)
+
+    const controller = new AbortController()
+    setAbortController(controller)
 
     const assistantMessageId = addMessage(chatId, 'assistant', [{ type: 'text', text: '' }])
 
     try {
-      const response = await fetch(`/api/chat/${chat.provider}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await streamChatCompletion(
+        {
+          provider: chat.provider,
           model: chat.model,
-          messages: [...chat.messages, { role: 'user', content }],
-          stream: true,
+          messages,
           webSearch: isWebSearchEnabled,
-        }),
-      })
-
-      if (!response.ok) throw new Error(`API error: ${response.status}`)
-
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
-      if (!reader) throw new Error('No response body')
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        for (const line of decoder.decode(value).split('\n')) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6))
-              if (data.type === 'delta' && data.text) {
-                appendToMessage(chatId, assistantMessageId, data.text)
-              } else if (data.type === 'citations' && data.citations) {
-                setCitations(chatId, assistantMessageId, data.citations)
-              } else if (data.type === 'error') {
-                appendToMessage(chatId, assistantMessageId, `\n\nError: ${data.error}`)
-              }
-            } catch { /* ignore parse errors */ }
-          }
+          systemPrompt: chat.systemPrompt,
+          signal: controller.signal,
+        },
+        {
+          onText: (text) => appendToMessage(chatId, assistantMessageId, text),
+          onCitations: (citations) => setCitations(chatId, assistantMessageId, citations),
+          onError: (error) => {
+            appendToMessage(chatId, assistantMessageId, `\n\nError: ${error}`)
+            toast.error(`API error: ${error}`)
+          },
         }
-      }
+      )
 
-      if (isFirstMessage) {
-        const userText = getTitleSeedText(content)
+      if (isFirstMessage && latestUserMessage) {
+        const userText = getTitleSeedText(latestUserMessage.content)
         if (userText) {
-          generateChatTitle(chatId, chat.provider, chat.model, userText)
+          void generateChatTitle(chatId, chat.provider, chat.model, userText)
         }
       }
     } catch (error) {
-      appendToMessage(chatId, assistantMessageId, `Error: ${error}`)
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendToMessage(chatId, assistantMessageId, '\n\n[Response stopped by user]')
+      } else {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        appendToMessage(chatId, assistantMessageId, `Error: ${errorMessage}`)
+        toast.error(`Failed to send message: ${errorMessage}`)
+      }
     } finally {
       setIsStreaming(false)
+      setAbortController(null)
     }
   }
 
@@ -291,14 +310,94 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
     return finalContent
   }
 
+  // Send to multiple models for comparison
+  const sendToModelsForComparison = async (content: ContentPart[]) => {
+    if (isStreaming) return
+
+    setIsStreaming(true)
+    setShowComparisonView(true)
+
+    // Initialize responses for all models
+    const initialResponses: ComparisonResponse[] = comparisonModels.map(model => ({
+      provider: model.provider,
+      model: model.model,
+      response: '',
+      isStreaming: true,
+    }))
+    setComparisonResponses(initialResponses)
+
+    // Send to all models in parallel
+    const promises = comparisonModels.map(async (modelConfig, index) => {
+      try {
+        let accumulatedText = ''
+        let streamError: string | null = null
+
+        await streamChatCompletion(
+          {
+            provider: modelConfig.provider,
+            model: modelConfig.model,
+            messages: [{ role: 'user', content }],
+            webSearch: isWebSearchEnabled,
+          },
+          {
+            onText: (text) => {
+              accumulatedText += text
+              setComparisonResponses(prev =>
+                prev.map((response, responseIndex) =>
+                  responseIndex === index
+                    ? { ...response, response: accumulatedText }
+                    : response
+                )
+              )
+            },
+            onError: (error) => {
+              streamError = error
+            },
+          }
+        )
+
+        if (streamError) {
+          throw new Error(streamError)
+        }
+
+        // Mark as done streaming
+        setComparisonResponses(prev =>
+          prev.map((r, i) =>
+            i === index ? { ...r, isStreaming: false } : r
+          )
+        )
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        setComparisonResponses(prev =>
+          prev.map((r, i) =>
+            i === index
+              ? { ...r, isStreaming: false, error: errorMessage }
+              : r
+          )
+        )
+      }
+    })
+
+    await Promise.all(promises)
+    setIsStreaming(false)
+  }
+
   const handleSend = async (content: ContentPart[]) => {
     if (!activeChatId || isStreaming) return
 
     const finalContent = buildContentWithCanvas(content)
     if (finalContent.length === 0) return
 
+    // If comparison mode is active, use comparison send
+    if (isComparisonMode) {
+      await sendToModelsForComparison(finalContent)
+      setIsNotesAttached(false)
+      setIsDrawingAttached(false)
+      return
+    }
+
     addMessage(activeChatId, 'user', finalContent)
-    await sendToAI(activeChatId, finalContent)
+    await sendToAI(activeChatId)
 
     setIsNotesAttached(false)
     setIsDrawingAttached(false)
@@ -310,15 +409,9 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
     const finalContent = buildContentWithCanvas(content)
     if (finalContent.length === 0) return
 
-    const chatId = createChat(DEFAULT_PROVIDER)
+    const chatId = createChat()
     addMessage(chatId, 'user', finalContent)
-    await sendToAIWithChat(
-      chatId,
-      DEFAULT_PROVIDER,
-      MODELS[DEFAULT_PROVIDER][0].id,
-      finalContent,
-      Boolean(getTitleSeedText(finalContent))
-    )
+    await sendToAI(chatId)
 
     setIsNotesAttached(false)
     setIsDrawingAttached(false)
@@ -332,126 +425,445 @@ export default function ChatPage({ initialPrompt, promptId, onPromptProcessed }:
     if (activeChatId) setModel(activeChatId, model)
   }
 
+  const handleSystemPromptSave = (systemPrompt: string | undefined) => {
+    if (activeChatId) {
+      setSystemPrompt(activeChatId, systemPrompt)
+      toast.success(systemPrompt ? 'Custom system prompt saved' : 'Using default system prompt')
+    }
+  }
+
+  // Comparison mode handlers
+  const handleToggleComparisonMode = () => {
+    setIsComparisonMode(!isComparisonMode)
+    if (isComparisonMode) {
+      // Exiting comparison mode
+      setShowComparisonView(false)
+      setComparisonResponses([])
+    }
+  }
+
+  const handlePromoteResponse = (provider: Provider, model: string, response: string) => {
+    if (!activeChatId) return
+
+    // Add the promoted response as an assistant message in the main chat
+    addMessage(activeChatId, 'assistant', [{ type: 'text', text: response }])
+
+    // Exit comparison mode
+    setIsComparisonMode(false)
+    setShowComparisonView(false)
+    setComparisonResponses([])
+
+    // Update chat to use the promoted model
+    setProvider(activeChatId, provider)
+    setModel(activeChatId, model)
+
+    toast.success(`Using response from ${model}`)
+  }
+
+  const handleCloseComparisonView = () => {
+    setShowComparisonView(false)
+    setComparisonResponses([])
+  }
+
+  // Title variants handlers
+  const handleGenerateTitleVariants = async (messageText: string) => {
+    const title = extractTitle(messageText)
+    if (!title) {
+      toast.error('Could not find a title in this message')
+      return
+    }
+
+    if (!activeChat) return
+
+    setIsGeneratingVariants(true)
+    setShowTitleVariants(true)
+    setTitleVariants([])
+
+    try {
+      const variants = await generateTitleVariants(
+        title,
+        activeChat.provider,
+        activeChat.model,
+        messageText.slice(0, 500) // Context snippet
+      )
+      setTitleVariants(variants)
+      toast.success(`Generated ${variants.length} title variants`)
+    } catch (error) {
+      toast.error('Failed to generate title variants')
+      console.error(error)
+    } finally {
+      setIsGeneratingVariants(false)
+    }
+  }
+
+  const handleSelectTitleVariant = (title: string) => {
+    if (!activeChatId) return
+
+    // Add the selected title as a user message to continue the conversation
+    addMessage(activeChatId, 'user', [{ type: 'text', text: `Use this title instead: "${title}"` }])
+
+    // Close variants view
+    setShowTitleVariants(false)
+    setTitleVariants([])
+
+    toast.success('Title selected')
+  }
+
+  const handleCloseTitleVariants = () => {
+    setShowTitleVariants(false)
+  }
+
+  const handleStop = () => {
+    if (abortController) {
+      abortController.abort()
+    }
+  }
+
   // Handle suggestion prompt from welcome screen
   const handleSuggestion = (prompt: string) => {
-    const chatId = createChat(DEFAULT_PROVIDER, prompt)
-    sendToAIWithChat(chatId, DEFAULT_PROVIDER, MODELS[DEFAULT_PROVIDER][0].id, [{ type: 'text', text: prompt }], true)
+    const chatId = createChat(undefined, prompt)
+    void sendToAI(chatId)
+  }
+
+  // Handle regenerate button click
+  const handleRegenerate = (messageId: string) => {
+    if (!activeChatId || isStreaming) return
+
+    const chat = chats.find(c => c.id === activeChatId)
+    if (!chat) return
+
+    // Find the assistant message index
+    const messageIndex = chat.messages.findIndex(m => m.id === messageId)
+    if (messageIndex === -1 || chat.messages[messageIndex].role !== 'assistant') return
+
+    // Get the previous user message
+    if (messageIndex === 0) return // No previous message
+    const previousMessage = chat.messages[messageIndex - 1]
+    if (previousMessage.role !== 'user') return
+
+    // Remove the assistant message
+    removeMessage(activeChatId, messageId)
+
+    // Re-send the user message
+    void sendToAI(activeChatId)
+  }
+
+  // Handle message edit
+  const handleEdit = (messageId: string, content: ContentPart[]) => {
+    if (!activeChatId || isStreaming) return
+
+    const chat = chats.find(c => c.id === activeChatId)
+    if (!chat) return
+
+    // Find the message index
+    const messageIndex = chat.messages.findIndex(m => m.id === messageId)
+    if (messageIndex === -1 || chat.messages[messageIndex].role !== 'user') return
+
+    // Update the message content
+    updateMessage(activeChatId, messageId, content)
+
+    // Remove all messages after this one (they're based on the old content)
+    const messagesToRemove = chat.messages.slice(messageIndex + 1)
+    messagesToRemove.forEach(msg => removeMessage(activeChatId, msg.id))
+
+    // Send the updated message to get a new AI response
+    void sendToAI(activeChatId)
+  }
+
+  const handleFork = (messageId: string, content: ContentPart[]) => {
+    if (!activeChatId || isStreaming) return
+
+    // Create fork with the edited message
+    const forkedChatId = forkChat(activeChatId, messageId, content)
+
+    if (forkedChatId) {
+      toast.success('Created conversation fork')
+      // Send the edited message to get AI response in the forked chat
+      void sendToAI(forkedChatId)
+    }
+  }
+
+  const handleTogglePin = (messageId: string) => {
+    if (!activeChatId) return
+    togglePinMessage(activeChatId, messageId)
+  }
+
+  const handleJumpToMessage = (chatId: string, messageId: string) => {
+    // Switch to the chat if not already active
+    if (chatId !== activeChatId) {
+      setActiveChatId(chatId)
+      // Wait for chat to switch and DOM to update
+      setTimeout(() => {
+        scrollToMessage(messageId)
+      }, 100)
+    } else {
+      scrollToMessage(messageId)
+    }
+    // Close the pinned panel after jumping
+    setIsPinnedPanelOpen(false)
+  }
+
+  const scrollToMessage = (messageId: string) => {
+    const messageElement = messageRefsMap.current.get(messageId)
+    if (messageElement) {
+      messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      // Highlight the message briefly
+      messageElement.classList.add('bg-accent/30')
+      setTimeout(() => {
+        messageElement.classList.remove('bg-accent/30')
+      }, 2000)
+    }
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full bg-background">
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Mobile Header (hamburger menu) */}
+        {isMobile && <MobileHeader onMenuClick={() => onToggleSidebar?.()} />}
+
         {activeChat ? (
           <>
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-4 pb-2 pt-1">
-              <div className="max-w-3xl mx-auto w-full space-y-4">
-                {activeChat.messages.map((message) => (
-                  <ChatMessage key={message.id} message={message} />
-                ))}
-                <div ref={messagesEndRef} />
-              </div>
+            {/* Header with system prompt and pinned messages buttons */}
+            <div className="flex h-14 items-center justify-end gap-2 border-b border-border/70 bg-background/85 px-4 backdrop-blur-xl">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsPinnedPanelOpen(!isPinnedPanelOpen)}
+                className="h-9 gap-1.5 rounded-xl px-3 text-sm"
+              >
+                <Pin className={`h-3.5 w-3.5 ${isPinnedPanelOpen ? 'fill-current' : ''}`} />
+                Pinned
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsSystemPromptDialogOpen(true)}
+                className="h-9 gap-1.5 rounded-xl px-3 text-sm"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                {activeChat.systemPrompt ? 'Custom System Prompt' : 'System Prompt'}
+              </Button>
             </div>
 
-            {/* Input — floats at bottom */}
-            <div className="max-w-3xl mx-auto w-full">
-              <ChatInput
-                onSend={handleSend}
-                disabled={isStreaming}
-                canvasContent={canvasContent}
-                canvasMode={canvasMode}
-                drawingSnapshot={drawingSnapshot}
-                isNotesAttached={isNotesAttached}
-                isDrawingAttached={isDrawingAttached}
-                onAttachNotes={() => {
-                  if (isNotesAttached) {
-                    setIsNotesAttached(false)
-                  } else if (canvasContent.trim()) {
-                    setIsNotesAttached(true)
-                    if (canvasMode !== 'notes') setCanvasMode('notes')
-                  }
-                }}
-                onAttachDrawing={() => {
-                  if (isDrawingAttached) {
-                    setIsDrawingAttached(false)
-                  } else if (drawingSnapshot) {
-                    setIsDrawingAttached(true)
-                    if (canvasMode !== 'draw') setCanvasMode('draw')
-                  }
-                }}
-                onOpenCanvas={() => setIsCanvasOpen(true)}
-                isWebSearchEnabled={isWebSearchEnabled}
-                onToggleWebSearch={activeChat.provider === 'openai' ? () => setIsWebSearchEnabled(!isWebSearchEnabled) : undefined}
-                provider={activeChat.provider}
-                model={activeChat.model}
-                onProviderChange={handleProviderChange}
-                onModelChange={handleModelChange}
+            {/* Messages, Comparison View, or Title Variants */}
+            {showComparisonView ? (
+              <ComparisonView
+                responses={comparisonResponses}
+                onPromote={handlePromoteResponse}
+                onClose={handleCloseComparisonView}
               />
+            ) : showTitleVariants ? (
+              <div className="flex-1 overflow-y-auto px-4 pb-6 pt-5 sm:px-6">
+                <div className="mx-auto w-full max-w-5xl">
+                  <TitleVariantsView
+                    variants={titleVariants}
+                    isGenerating={isGeneratingVariants}
+                    onSelectVariant={handleSelectTitleVariant}
+                    onClose={handleCloseTitleVariants}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto px-4 pb-8 pt-5 sm:px-6">
+                <div className="mx-auto w-full max-w-[48rem] space-y-5">
+                  {activeChat.messages.map((message, index) => {
+                    const hasSubsequentMessages = index < activeChat.messages.length - 1
+                    return (
+                      <div
+                        key={message.id}
+                        ref={(el) => {
+                          if (el) {
+                            messageRefsMap.current.set(message.id, el)
+                          } else {
+                            messageRefsMap.current.delete(message.id)
+                          }
+                        }}
+                        className="transition-colors duration-500"
+                      >
+                        <ChatMessage
+                          message={message}
+                          onRegenerate={message.role === 'assistant' ? () => handleRegenerate(message.id) : undefined}
+                          onEdit={message.role === 'user' ? handleEdit : undefined}
+                          onFork={message.role === 'user' ? handleFork : undefined}
+                          onTogglePin={handleTogglePin}
+                          onGenerateTitleVariants={message.role === 'assistant' ? handleGenerateTitleVariants : undefined}
+                          hasSubsequentMessages={hasSubsequentMessages}
+                          modelId={activeChat.model}
+                        />
+                      </div>
+                    )
+                  })}
+                  <div ref={messagesEndRef} />
+                </div>
+              </div>
+            )}
+
+            {/* Comparison mode selector */}
+            <ComparisonModeSelector
+              selectedModels={comparisonModels}
+              onModelsChange={setComparisonModels}
+              onClose={() => setIsComparisonMode(false)}
+              isActive={isComparisonMode}
+            />
+
+            {/* Input — floats at bottom */}
+            <div className="w-full px-4 pb-4 sm:px-6">
+              <div className="mx-auto w-full max-w-[48rem]">
+                <ChatInput
+                  onSend={handleSend}
+                  disabled={isStreaming}
+                  isStreaming={isStreaming}
+                  onStop={handleStop}
+                  canvasContent={canvasContent}
+                  canvasMode={canvasMode}
+                  drawingSnapshot={drawingSnapshot}
+                  isNotesAttached={isNotesAttached}
+                  isDrawingAttached={isDrawingAttached}
+                  onAttachNotes={() => {
+                    if (isNotesAttached) {
+                      setIsNotesAttached(false)
+                    } else if (canvasContent.trim()) {
+                      setIsNotesAttached(true)
+                      if (canvasMode !== 'notes') setCanvasMode('notes')
+                    }
+                  }}
+                  onAttachDrawing={() => {
+                    if (isDrawingAttached) {
+                      setIsDrawingAttached(false)
+                    } else if (drawingSnapshot) {
+                      setIsDrawingAttached(true)
+                      if (canvasMode !== 'draw') setCanvasMode('draw')
+                    }
+                  }}
+                  onOpenCanvas={() => setIsCanvasOpen(true)}
+                  isWebSearchEnabled={isWebSearchEnabled}
+                  onToggleWebSearch={activeChat.provider === 'openai' ? () => setIsWebSearchEnabled(!isWebSearchEnabled) : undefined}
+                  provider={activeChat.provider}
+                  model={activeChat.model}
+                  onProviderChange={handleProviderChange}
+                  onModelChange={handleModelChange}
+                  messages={activeChat.messages}
+                  isComparisonMode={isComparisonMode}
+                  onToggleComparisonMode={handleToggleComparisonMode}
+                  onRegisterFocusInput={onRegisterFocusInput}
+                />
+              </div>
             </div>
           </>
         ) : (
           /* Welcome / empty state */
           <div className="flex-1 flex flex-col">
-            <div className="flex-1 flex items-center justify-center px-4">
+            <div className="flex flex-1 items-center justify-center px-6 py-10">
               <WelcomeScreen onSuggestion={handleSuggestion} />
             </div>
-            <div className="max-w-3xl mx-auto w-full">
-              <ChatInput
-                onSend={handleWelcomeSend}
-                disabled={isStreaming}
-                canvasContent={canvasContent}
-                canvasMode={canvasMode}
-                drawingSnapshot={drawingSnapshot}
-                isNotesAttached={isNotesAttached}
-                isDrawingAttached={isDrawingAttached}
-                onAttachNotes={() => {
-                  if (isNotesAttached) {
-                    setIsNotesAttached(false)
-                  } else if (canvasContent.trim()) {
-                    setIsNotesAttached(true)
-                    if (canvasMode !== 'notes') setCanvasMode('notes')
-                  }
-                }}
-                onAttachDrawing={() => {
-                  if (isDrawingAttached) {
-                    setIsDrawingAttached(false)
-                  } else if (drawingSnapshot) {
-                    setIsDrawingAttached(true)
-                    if (canvasMode !== 'draw') setCanvasMode('draw')
-                  }
-                }}
-                onOpenCanvas={() => setIsCanvasOpen(true)}
-                isWebSearchEnabled={isWebSearchEnabled}
-                onToggleWebSearch={() => setIsWebSearchEnabled(!isWebSearchEnabled)}
-                provider={DEFAULT_PROVIDER}
-                model={MODELS[DEFAULT_PROVIDER][0].id}
-                onProviderChange={() => {}}
-                onModelChange={() => {}}
-              />
+            <div className="w-full px-4 pb-4 sm:px-6">
+              <div className="mx-auto w-full max-w-[48rem]">
+                <ChatInput
+                  onSend={handleWelcomeSend}
+                  disabled={isStreaming}
+                  isStreaming={isStreaming}
+                  onStop={handleStop}
+                  canvasContent={canvasContent}
+                  canvasMode={canvasMode}
+                  drawingSnapshot={drawingSnapshot}
+                  isNotesAttached={isNotesAttached}
+                  isDrawingAttached={isDrawingAttached}
+                  onAttachNotes={() => {
+                    if (isNotesAttached) {
+                      setIsNotesAttached(false)
+                    } else if (canvasContent.trim()) {
+                      setIsNotesAttached(true)
+                      if (canvasMode !== 'notes') setCanvasMode('notes')
+                    }
+                  }}
+                  onAttachDrawing={() => {
+                    if (isDrawingAttached) {
+                      setIsDrawingAttached(false)
+                    } else if (drawingSnapshot) {
+                      setIsDrawingAttached(true)
+                      if (canvasMode !== 'draw') setCanvasMode('draw')
+                    }
+                  }}
+                  onOpenCanvas={() => setIsCanvasOpen(true)}
+                  isWebSearchEnabled={isWebSearchEnabled}
+                  onToggleWebSearch={() => setIsWebSearchEnabled(!isWebSearchEnabled)}
+                  provider={defaultProvider}
+                  model={defaultModel}
+                  onProviderChange={() => {}}
+                  onModelChange={() => {}}
+                  isComparisonMode={isComparisonMode}
+                  onToggleComparisonMode={handleToggleComparisonMode}
+                  onRegisterFocusInput={onRegisterFocusInput}
+                />
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Canvas reopen tab — visible only when panel is closed */}
-      {!isCanvasOpen && (
-        <button
-          type="button"
-          onClick={() => setIsCanvasOpen(true)}
-          aria-label="Open canvas panel"
-          className="self-stretch flex items-center justify-center w-5 bg-card border-l border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors duration-150"
-        >
-          <ChevronLeft className="h-3.5 w-3.5" />
-        </button>
+      {/* Canvas — Side panel on desktop, modal on mobile */}
+      {isMobile ? (
+        /* Mobile: Canvas as Dialog/Modal */
+        <Dialog open={isCanvasOpen} onOpenChange={setIsCanvasOpen}>
+          <DialogContent className="max-w-[95vw] w-full h-[85vh] max-h-[85vh] p-0 flex flex-col">
+            <CanvasPanel
+              width={400}
+              onWidthChange={() => {}}
+              onClose={() => setIsCanvasOpen(false)}
+            />
+          </DialogContent>
+        </Dialog>
+      ) : (
+        /* Desktop: Side panel */
+        <>
+          {/* Canvas reopen tab — visible only when panel is closed */}
+          {!isCanvasOpen && (
+            <button
+              type="button"
+              onClick={() => setIsCanvasOpen(true)}
+              aria-label="Open canvas panel"
+              className="flex w-8 self-stretch items-center justify-center border-l border-border/70 bg-background text-muted-foreground transition-colors duration-150 hover:bg-accent/60 hover:text-foreground"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+          )}
+
+          {/* Canvas Panel */}
+          {isCanvasOpen && (
+            <CanvasPanel
+              width={canvasWidth}
+              onWidthChange={setCanvasWidth}
+              onClose={() => setIsCanvasOpen(false)}
+            />
+          )}
+        </>
       )}
 
-      {/* Canvas Panel */}
-      {isCanvasOpen && (
-        <CanvasPanel
-          width={canvasWidth}
-          onWidthChange={setCanvasWidth}
-          onClose={() => setIsCanvasOpen(false)}
+      {/* Pinned Messages Panel */}
+      {isPinnedPanelOpen && (
+        <PinnedMessagesPanel
+          chats={chats}
+          activeChatId={activeChatId}
+          onJumpToMessage={handleJumpToMessage}
+          onUnpin={(chatId, messageId) => {
+            togglePinMessage(chatId, messageId)
+            toast.success('Message unpinned')
+          }}
+          onClose={() => setIsPinnedPanelOpen(false)}
+        />
+      )}
+
+      {/* System Prompt Dialog */}
+      {activeChat && (
+        <SystemPromptDialog
+          isOpen={isSystemPromptDialogOpen}
+          onClose={() => setIsSystemPromptDialogOpen(false)}
+          currentSystemPrompt={activeChat.systemPrompt}
+          onSave={handleSystemPromptSave}
         />
       )}
     </div>

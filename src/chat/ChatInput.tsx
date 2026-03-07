@@ -3,9 +3,15 @@ import { createPortal } from 'react-dom'
 import type { ContentPart, Provider } from '../types/chat'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
+import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 import { cn } from '@/lib/utils'
-import { X, FileText, Pencil, Globe, Paperclip, ArrowUp } from 'lucide-react'
+import { X, FileText, Pencil, Globe, Paperclip, ArrowUp, Square, ArrowLeftRight } from 'lucide-react'
 import ModelPicker from './ModelPicker'
+import TokenCounter from '@/components/TokenCounter'
+import { ConversationCost } from '@/components/CostDisplay'
+import type { Message } from '../types/chat'
+import { useIsMobile } from '../hooks/useMediaQuery'
 
 // ---------------------------------------------------------------------------
 // Attachment chip with tiny inline preview + hover popover (portalled)
@@ -33,7 +39,7 @@ function NotesChip({ content, onDetach }: { content: string; onDetach: () => voi
     <>
       <span
         ref={chipRef}
-        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted border border-border text-xs text-foreground"
+        className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background px-3 py-1.5 text-xs font-medium text-foreground"
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
@@ -53,7 +59,7 @@ function NotesChip({ content, onDetach }: { content: string; onDetach: () => voi
 
       {hovered && createPortal(
         <div
-          className="max-h-40 overflow-y-auto rounded-lg border border-border bg-card shadow-lg p-3"
+          className="max-h-40 overflow-y-auto rounded-xl border border-border/70 bg-popover p-3 shadow-xl"
           style={popoverStyle}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
@@ -88,7 +94,7 @@ function DrawingChip({ snapshot: snapshotUrl, onDetach }: { snapshot: string; on
     <>
       <span
         ref={chipRef}
-        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted border border-border text-xs text-foreground"
+        className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background px-3 py-1.5 text-xs font-medium text-foreground"
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
@@ -112,7 +118,7 @@ function DrawingChip({ snapshot: snapshotUrl, onDetach }: { snapshot: string; on
 
       {hovered && createPortal(
         <div
-          className="rounded-lg border border-border bg-card shadow-lg p-2"
+          className="rounded-xl border border-border/70 bg-popover p-2.5 shadow-xl"
           style={popoverStyle}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
@@ -137,6 +143,8 @@ function DrawingChip({ snapshot: snapshotUrl, onDetach }: { snapshot: string; on
 interface ChatInputProps {
   onSend: (content: ContentPart[]) => void
   disabled?: boolean
+  isStreaming?: boolean
+  onStop?: () => void
   canvasContent?: string
   canvasMode?: 'notes' | 'draw'
   drawingSnapshot?: string | null
@@ -152,6 +160,13 @@ interface ChatInputProps {
   model?: string
   onProviderChange?: (provider: Provider) => void
   onModelChange?: (model: string) => void
+  // Token counter
+  messages?: Message[]
+  // Comparison mode
+  isComparisonMode?: boolean
+  onToggleComparisonMode?: () => void
+  // Keyboard shortcut support
+  onRegisterFocusInput?: (focusFn: () => void) => void
 }
 
 interface AttachedImage {
@@ -166,6 +181,8 @@ interface AttachedImage {
 export default function ChatInput({
   onSend,
   disabled,
+  isStreaming = false,
+  onStop,
   canvasContent = '',
   canvasMode: _canvasMode = 'notes',
   drawingSnapshot = null,
@@ -180,9 +197,16 @@ export default function ChatInput({
   model = 'gpt-5.2',
   onProviderChange,
   onModelChange,
+  messages = [],
+  isComparisonMode = false,
+  onToggleComparisonMode,
+  onRegisterFocusInput,
 }: ChatInputProps) {
+  const isMobile = useIsMobile()
   const [text, setText] = useState('')
   const [images, setImages] = useState<AttachedImage[]>([])
+  const [notesEmptyHint, setNotesEmptyHint] = useState(false)
+  const [drawingEmptyHint, setDrawingEmptyHint] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -245,6 +269,30 @@ export default function ChatInput({
   const removeImage = useCallback((id: string) => {
     setImages((prev) => prev.filter((img) => img.id !== id))
   }, [])
+
+  // ── Auto-dismiss empty hints ────────────────────────────────────────────
+  useEffect(() => {
+    if (notesEmptyHint) {
+      const timer = setTimeout(() => setNotesEmptyHint(false), 2000)
+      return () => clearTimeout(timer)
+    }
+  }, [notesEmptyHint])
+
+  useEffect(() => {
+    if (drawingEmptyHint) {
+      const timer = setTimeout(() => setDrawingEmptyHint(false), 2000)
+      return () => clearTimeout(timer)
+    }
+  }, [drawingEmptyHint])
+
+  // ── Register focus callback for keyboard shortcuts ─────────────────────
+  useEffect(() => {
+    if (onRegisterFocusInput) {
+      onRegisterFocusInput(() => {
+        textareaRef.current?.focus()
+      })
+    }
+  }, [onRegisterFocusInput])
 
   // ── Auto-resize textarea ────────────────────────────────────────────────
   const adjustTextareaHeight = useCallback(() => {
@@ -311,16 +359,17 @@ export default function ChatInput({
   // Render
   // ---------------------------------------------------------------------------
   return (
-    <div className="px-4 pb-5">
-      {/* ── Single rounded floating container ─────────────────────────────── */}
-      <div
-        className="rounded-xl border border-border bg-card focus-within:border-accent transition-[border-color] duration-200 overflow-hidden"
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-      >
+    <TooltipProvider delayDuration={0}>
+      <div className="pb-4 pt-3">
+        {/* ── Single rounded floating container ─────────────────────────────── */}
+        <div
+          className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-background transition-[border-color,box-shadow] duration-200 focus-within:border-ring/40"
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+        >
         {/* ── Attachment chips (notes / drawing) ──────────────────────────── */}
         {hasAttachmentChips && (
-          <div className="flex flex-wrap gap-2 px-4 pt-3">
+          <div className="flex flex-wrap gap-2 px-4 pt-4">
             {isNotesAttached && canvasContent.trim() && (
               <NotesChip content={canvasContent.trim()} onDetach={onAttachNotes!} />
             )}
@@ -332,12 +381,12 @@ export default function ChatInput({
 
         {/* ── Image thumbnails ─────────────────────────────────────────────── */}
         {images.length > 0 && (
-          <div className={cn('flex flex-wrap gap-2 px-4', hasAttachmentChips ? 'pt-2' : 'pt-3')}>
+          <div className={cn('flex flex-wrap gap-2 px-4', hasAttachmentChips ? 'pt-2' : 'pt-4')}>
             {images.map((img) => (
               <div key={img.id} className="relative group">
-                <div className="relative overflow-hidden rounded-lg ring-2 ring-border group-hover:ring-accent transition-[box-shadow] duration-150">
+                <div className="relative overflow-hidden rounded-xl border border-border/70 bg-muted/40 ring-1 ring-border/60 transition-[box-shadow,border-color] duration-150 group-hover:border-ring/40">
                   <img src={img.dataUrl} alt="Attached" className="w-20 h-20 object-cover" />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                  <div className="absolute inset-0 bg-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                 </div>
                 <button
                   type="button"
@@ -365,7 +414,7 @@ export default function ChatInput({
             placeholder="Ask me anything..."
             disabled={disabled}
             data-flow-name="chat-input"
-            className="w-full px-4 py-3 bg-transparent border-0 resize-none focus-visible:ring-0 text-sm"
+            className="w-full resize-none border-0 bg-transparent px-5 py-4 text-[15px] leading-6 focus-visible:ring-0"
             style={{ height: '56px', minHeight: '56px', maxHeight: '200px' }}
             aria-label="Type your message"
           />
@@ -379,21 +428,18 @@ export default function ChatInput({
         </div>
 
         {/* ── Toolbar row ──────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between px-4 py-2.5">
-          {/* Left cluster */}
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-3 border-t border-border/60 px-4 py-3">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5">
             {/* Model picker — only render when callbacks are provided */}
             {onProviderChange && onModelChange && (
-              <>
+              <div className="flex shrink-0 items-center gap-2">
                 <ModelPicker
                   provider={provider}
                   model={model}
                   onProviderChange={onProviderChange}
                   onModelChange={onModelChange}
                 />
-                {/* Separator */}
-                <div className="w-px h-4 bg-border" />
-              </>
+              </div>
             )}
 
             {/* Web-search pill */}
@@ -404,10 +450,10 @@ export default function ChatInput({
                 aria-pressed={isWebSearchEnabled}
                 aria-label={isWebSearchEnabled ? 'Web search enabled' : 'Enable web search'}
                 className={cn(
-                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition-colors duration-150',
+                  'inline-flex h-10 items-center gap-1.5 rounded-xl border px-3 text-sm font-medium transition-colors duration-150',
                   isWebSearchEnabled
-                    ? 'border-foreground/50 text-foreground bg-white/10'
-                    : 'border-border text-muted-foreground hover:border-accent'
+                    ? 'border-border bg-accent text-foreground'
+                    : 'border-border/80 bg-background text-muted-foreground hover:border-ring/30 hover:text-foreground'
                 )}
               >
                 <Globe className="h-3.5 w-3.5" />
@@ -415,13 +461,34 @@ export default function ChatInput({
               </button>
             )}
 
+            {/* Comparison mode pill */}
+            {onToggleComparisonMode && (
+              <button
+                type="button"
+                onClick={onToggleComparisonMode}
+                aria-pressed={isComparisonMode}
+                aria-label={isComparisonMode ? 'Comparison mode enabled' : 'Enable comparison mode'}
+                className={cn(
+                  'inline-flex h-10 items-center gap-1.5 rounded-xl border px-3 text-sm font-medium transition-colors duration-150',
+                  isComparisonMode
+                    ? 'border-border bg-accent text-foreground'
+                    : 'border-border/80 bg-background text-muted-foreground hover:border-ring/30 hover:text-foreground'
+                )}
+              >
+                <ArrowLeftRight className="h-3.5 w-3.5" />
+                Compare
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1">
             {/* Image attach (paperclip) */}
             <Button
               variant="ghost"
               size="icon"
               onClick={() => fileInputRef.current?.click()}
               data-flow-name="btn-attach-image"
-              className="h-7 w-7"
+              className={cn('rounded-xl', isMobile ? 'h-11 w-11' : 'h-10 w-10')}
               title="Attach image"
               aria-label="Attach image to message"
             >
@@ -440,67 +507,130 @@ export default function ChatInput({
 
             {/* Notes attach */}
             {onAttachNotes && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => {
-                  if (!canvasContent.trim()) {
-                    onOpenCanvas?.()
-                  } else {
-                    onAttachNotes()
-                  }
-                }}
-                data-flow-name="btn-attach-notes"
-                className={cn('h-7 w-7', isNotesAttached && 'bg-white/10 text-foreground border border-foreground/30')}
-                title={canvasContent.trim() ? (isNotesAttached ? 'Detach notes' : 'Attach notes') : 'Open canvas'}
-                aria-label={isNotesAttached ? 'Notes attached to message' : 'Attach notes to message'}
-                aria-pressed={isNotesAttached}
-              >
-                <FileText className="h-4 w-4" />
-              </Button>
+              <Tooltip open={notesEmptyHint} onOpenChange={setNotesEmptyHint}>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      // Priority: if attached, always allow detach
+                      if (isNotesAttached) {
+                        onAttachNotes()
+                      } else if (!canvasContent.trim()) {
+                        // Empty: show hint + open canvas
+                        setNotesEmptyHint(true)
+                        onOpenCanvas?.()
+                      } else {
+                        // Has content: attach
+                        onAttachNotes()
+                      }
+                    }}
+                    data-flow-name="btn-attach-notes"
+                    className={cn(
+                      'rounded-xl',
+                      isMobile ? 'h-11 w-11' : 'h-10 w-10',
+                      isNotesAttached && 'border border-border/70 bg-accent text-foreground'
+                    )}
+                    title={canvasContent.trim() ? (isNotesAttached ? 'Detach notes' : 'Attach notes') : 'Open canvas'}
+                    aria-label={isNotesAttached ? 'Notes attached to message' : 'Attach notes to message'}
+                    aria-pressed={isNotesAttached}
+                  >
+                    <FileText className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipPrimitive.Portal>
+                  <TooltipContent side="top">
+                    <p>Notes is empty</p>
+                  </TooltipContent>
+                </TooltipPrimitive.Portal>
+              </Tooltip>
             )}
 
             {/* Drawing attach */}
             {onAttachDrawing && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => {
-                  if (!drawingSnapshot) {
-                    onOpenCanvas?.()
-                  } else {
-                    onAttachDrawing()
-                  }
-                }}
-                data-flow-name="btn-attach-drawing"
-                className={cn('h-7 w-7', isDrawingAttached && 'bg-white/10 text-foreground border border-foreground/30')}
-                title={drawingSnapshot ? (isDrawingAttached ? 'Detach drawing' : 'Attach drawing') : 'Open canvas'}
-                aria-label={isDrawingAttached ? 'Drawing attached to message' : 'Attach drawing to message'}
-                aria-pressed={isDrawingAttached}
-              >
-                <Pencil className="h-4 w-4" />
-              </Button>
+              <Tooltip open={drawingEmptyHint} onOpenChange={setDrawingEmptyHint}>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      // Priority: if attached, always allow detach
+                      if (isDrawingAttached) {
+                        onAttachDrawing()
+                      } else if (!drawingSnapshot) {
+                        // Empty: show hint + open canvas
+                        setDrawingEmptyHint(true)
+                        onOpenCanvas?.()
+                      } else {
+                        // Has content: attach
+                        onAttachDrawing()
+                      }
+                    }}
+                    data-flow-name="btn-attach-drawing"
+                    className={cn(
+                      'rounded-xl',
+                      isMobile ? 'h-11 w-11' : 'h-10 w-10',
+                      isDrawingAttached && 'border border-border/70 bg-accent text-foreground'
+                    )}
+                    title={drawingSnapshot ? (isDrawingAttached ? 'Detach drawing' : 'Attach drawing') : 'Open canvas'}
+                    aria-label={isDrawingAttached ? 'Drawing attached to message' : 'Attach drawing to message'}
+                    aria-pressed={isDrawingAttached}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipPrimitive.Portal>
+                  <TooltipContent side="top">
+                    <p>Drawing is empty</p>
+                  </TooltipContent>
+                </TooltipPrimitive.Portal>
+              </Tooltip>
             )}
           </div>
 
-          {/* Right cluster — Send button */}
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!canSend}
-            data-flow-name="btn-send"
-            aria-label="Send message"
-            className={cn(
-              'size-8 rounded-lg flex items-center justify-center transition-[opacity,color] duration-150',
-              canSend
-                ? 'bg-foreground text-background hover:opacity-80'
-                : 'bg-muted text-muted-foreground cursor-not-allowed'
+          <div className="ml-auto flex items-center gap-2">
+            {messages.length > 0 && (
+              <>
+                <TokenCounter messages={messages} modelId={model} />
+                <ConversationCost messages={messages} modelId={model} />
+              </>
             )}
-          >
-            <ArrowUp className="h-4 w-4" />
-          </button>
+
+            {isStreaming ? (
+              <button
+                type="button"
+                onClick={onStop}
+                data-flow-name="btn-stop"
+                aria-label="Stop generating"
+                className={cn(
+                  'flex items-center justify-center rounded-xl bg-foreground text-background transition-opacity duration-150 hover:opacity-85',
+                  isMobile ? 'size-11' : 'size-10'
+                )}
+              >
+                <Square className="h-3.5 w-3.5 fill-current" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={!canSend}
+                data-flow-name="btn-send"
+                aria-label="Send message"
+                className={cn(
+                  'flex items-center justify-center rounded-xl transition-[opacity,color,background-color] duration-150',
+                  isMobile ? 'size-11' : 'size-10',
+                  canSend
+                    ? 'bg-foreground text-background hover:opacity-85'
+                    : 'cursor-not-allowed bg-muted text-muted-foreground'
+                )}
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
+    </TooltipProvider>
   )
 }

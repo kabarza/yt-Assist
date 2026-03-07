@@ -26,15 +26,22 @@ Chat with Claude or GPT directly in the app with support for images.
 # Install dependencies
 npm install
 
-# Run frontend only
+# Run frontend only (use the local Vite URL printed in the terminal,
+# typically http://localhost:5173 when that port is free)
 npm run dev
 
-# Run API server only
+# Run API server only (defaults to http://localhost:3000)
 npm run dev:server
 
 # Run both frontend and API server
 npm run dev:all
+
+# Build or preview the frontend bundle
+npm run build
+npm run preview
 ```
+
+`vite.config.ts` proxies `/api` requests to `http://localhost:3000`. The frontend dev port is not pinned in tracked config, so the canonical local frontend URL should be taken from Vite's startup output.
 
 ## Environment Variables
 
@@ -46,8 +53,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 
 # Optional
+# API server port (defaults to 3000)
 PORT=3000
 ```
+
+If you override `PORT`, update the `/api` proxy target in `vite.config.ts` to match.
 
 ## Deploy (Self-Hosted)
 
@@ -62,7 +72,7 @@ npm run build
 npm run server
 ```
 
-The server will serve the static frontend and provide API endpoints for AI chat.
+The production server serves the built frontend from `dist/` and exposes the AI chat API from the same Hono process.
 
 ## Deploy (Static Only)
 

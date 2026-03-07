@@ -20,9 +20,23 @@ interface ChatRequest {
   messages: Message[]
   stream?: boolean
   webSearch?: boolean
+  systemPrompt?: string
+  endpointOverride?: {
+    baseUrl?: string
+    apiKey?: string
+  }
 }
 
 const openaiRoute = new Hono()
+
+interface URLCitationAnnotation {
+  url_citation?: {
+    title: string
+    url: string
+    start_index: number
+    end_index: number
+  }
+}
 
 // Convert our message format to OpenAI's format
 function toOpenAIMessages(messages: Message[]): OpenAI.ChatCompletionMessageParam[] {
@@ -59,16 +73,37 @@ function toOpenAIMessages(messages: Message[]): OpenAI.ChatCompletionMessagePara
   })
 }
 
+function extractCitations(annotations: URLCitationAnnotation[] | null | undefined) {
+  return (annotations ?? [])
+    .flatMap((annotation) => {
+      const citation = annotation.url_citation
+      if (!citation) return []
+
+      return [{
+        title: citation.title,
+        url: citation.url,
+        start_index: citation.start_index,
+        end_index: citation.end_index,
+      }]
+    })
+}
+
 openaiRoute.post('/', async (c) => {
-  const apiKey = process.env.OPENAI_API_KEY
+  const body = await c.req.json<ChatRequest>()
+  const overrideApiKey = body.endpointOverride?.apiKey?.trim()
+  const overrideBaseUrl = body.endpointOverride?.baseUrl?.trim()
+  const apiKey = overrideApiKey || process.env.OPENAI_API_KEY || (overrideBaseUrl ? 'local-proxy-key' : '')
+
   if (!apiKey) {
     return c.json({ error: 'OPENAI_API_KEY not configured' }, 500)
   }
 
-  const body = await c.req.json<ChatRequest>()
-  const { model, messages, stream = true, webSearch = false } = body
+  const { model, messages, stream = true, webSearch = false, systemPrompt } = body
 
-  const client = new OpenAI({ apiKey })
+  const client = new OpenAI({
+    apiKey,
+    ...(overrideBaseUrl ? { baseURL: overrideBaseUrl } : {}),
+  })
 
   // Only gpt-4o-search-preview / gpt-4o-mini-search-preview support web_search_options.
   // When enabled, swap to the appropriate search model regardless of what the user selected.
@@ -79,7 +114,7 @@ openaiRoute.post('/', async (c) => {
   const params = {
     model: resolvedModel,
     messages: [
-      { role: 'system' as const, content: CANVAS_SYSTEM_PROMPT },
+      { role: 'system' as const, content: systemPrompt || CANVAS_SYSTEM_PROMPT },
       ...toOpenAIMessages(messages),
     ],
     ...(webSearch && { web_search_options: {} }),
@@ -107,14 +142,8 @@ openaiRoute.post('/', async (c) => {
 
         // Send citations once we have them (parallel request already in flight)
         if (annotationsPromise) {
-          const annotations = await annotationsPromise
-          if (annotations?.length) {
-            const citations = annotations.map(a => ({
-              title: a.url_citation.title,
-              url: a.url_citation.url,
-              start_index: a.url_citation.start_index,
-              end_index: a.url_citation.end_index,
-            }))
+          const citations = extractCitations(await annotationsPromise as URLCitationAnnotation[] | undefined)
+          if (citations.length) {
             await sseStream.writeSSE({
               data: JSON.stringify({ type: 'citations', citations }),
             })
@@ -136,7 +165,8 @@ openaiRoute.post('/', async (c) => {
       const response = await client.chat.completions.create(params)
 
       const text = response.choices[0]?.message?.content || ''
-      return c.json({ text })
+      const citations = extractCitations(response.choices[0]?.message?.annotations as URLCitationAnnotation[] | undefined)
+      return c.json({ text, citations })
     } catch (error) {
       console.error('OpenAI error:', error)
       return c.json({ error: String(error) }, 500)

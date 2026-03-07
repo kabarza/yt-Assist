@@ -17,6 +17,7 @@ import { useTemplateStore } from '../../stores/templateStore'
 import SortableSection from './SortableSection'
 import OutputOrderEditor from './OutputOrderEditor'
 import ConfirmDialog from '../../components/ConfirmDialog'
+import TemplateShareDialog from './TemplateShareDialog'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   DropdownMenu,
@@ -27,8 +28,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ChevronDown, Star, Archive } from 'lucide-react'
+import { ChevronDown, Star, Archive, Share2, Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
+import type { TemplatePreset } from '../../types/template'
 
 type EditorTab = 'sections' | 'outputs'
 
@@ -74,6 +77,7 @@ export default function TemplateEditor() {
   const [newPresetName, setNewPresetName] = useState('')
   const [showSavePreset, setShowSavePreset] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const [showShareDialog, setShowShareDialog] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const sensors = useSensors(
@@ -157,14 +161,32 @@ export default function TemplateEditor() {
     }
   }
 
+  const handleImportSharedPreset = (preset: TemplatePreset) => {
+    // Import the preset by importing it as a JSON string
+    const presetData = JSON.stringify({
+      presets: [preset],
+      sections: preset.sections,
+      outputTypes: preset.outputTypes,
+      defaultPresetId: null,
+      activePresetId: preset.id
+    })
+
+    if (importPresets(presetData)) {
+      loadPreset(preset.id)
+      setHasChanges(true)
+    } else {
+      toast.error('Failed to import template')
+    }
+  }
+
   const sortedSections = [...sections].sort((a, b) => a.order - b.order)
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6 p-6 sm:p-8">
       {/* Header with Presets */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h3 className="text-lg font-semibold text-white mb-1">Template Editor</h3>
+          <h3 className="mb-1 text-2xl font-semibold tracking-tight text-foreground">Template Editor</h3>
           <p className="text-sm text-muted-foreground">
             Customize outputs and prompt sections to match your workflow.
           </p>
@@ -177,7 +199,7 @@ export default function TemplateEditor() {
               variant="outline"
               size="sm"
               data-flow-name="btn-presets-menu"
-              className="gap-2"
+              className="gap-2 rounded-lg"
             >
               <Archive className="size-4" />
               Presets
@@ -313,6 +335,32 @@ export default function TemplateEditor() {
                 aria-label="Import template file"
               />
             </div>
+
+            {/* Share/Import */}
+            <DropdownMenuSeparator />
+            <div className="p-2">
+              <DropdownMenuItem
+                onClick={() => {
+                  setShowShareDialog(true)
+                  setShowPresetMenu(false)
+                }}
+                disabled={!activePreset}
+                className="text-sm cursor-pointer"
+              >
+                <Share2 className="h-4 w-4 mr-2" />
+                Share Template...
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setShowShareDialog(true)
+                  setShowPresetMenu(false)
+                }}
+                className="text-sm cursor-pointer"
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Import Shared Template...
+              </DropdownMenuItem>
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -441,6 +489,14 @@ export default function TemplateEditor() {
         variant="warning"
         onConfirm={handleResetConfirm}
         onCancel={() => setShowResetConfirm(false)}
+      />
+
+      {/* Share Dialog */}
+      <TemplateShareDialog
+        isOpen={showShareDialog}
+        onClose={() => setShowShareDialog(false)}
+        currentPreset={activePreset}
+        onImport={handleImportSharedPreset}
       />
     </div>
   )

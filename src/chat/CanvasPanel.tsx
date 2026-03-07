@@ -3,9 +3,12 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import { Markdown } from 'tiptap-markdown';
+import { MermaidExtension } from '../extensions/MermaidExtension';
 import { useCanvasStore } from '../stores/canvasStore';
+import { useChatStore } from '../stores/chatStore';
 import { DrawingCanvas } from './DrawingCanvas';
 import ConfirmDialog from '../components/ConfirmDialog';
+import AISuggestionsPanel from './AISuggestionsPanel';
 import type { DrawingCanvasRef } from '../types/canvas';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -17,7 +20,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { ChevronRight, X, Settings, Clock } from 'lucide-react';
+import { ChevronRight, X, Settings, Clock, Download, FileText, GitBranch, Sparkles } from 'lucide-react';
+import html2canvas from 'html2canvas';
+import { CANVAS_TEMPLATES } from '../types/canvasTemplates';
 
 interface CanvasPanelProps {
   width: number;
@@ -46,11 +51,16 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
     setCanvasType,
     setCanvasInstructions,
   } = useCanvasStore();
+  const { activeChat } = useChatStore();
   const [showHistoryMenu, setShowHistoryMenu] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showDrawingClearConfirm, setShowDrawingClearConfirm] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showTemplateConfirm, setShowTemplateConfirm] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [showAISuggestions, setShowAISuggestions] = useState(false);
   const historyMenuRef = useRef<HTMLDivElement>(null);
   const lastContentRef = useRef(content);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -69,6 +79,7 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
         transformPastedText: true,
         transformCopiedText: true,
       }),
+      MermaidExtension,
     ],
     content: content,
     onUpdate: ({ editor }) => {
@@ -80,7 +91,7 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-invert max-w-none focus:outline-none h-full p-4',
+        class: 'prose prose-neutral dark:prose-invert max-w-none focus:outline-none h-full p-5 text-sm prose-headings:my-4 prose-li:my-0 prose-ol:my-3 prose-p:my-2 prose-pre:my-4 prose-table:my-4 prose-ul:my-3',
       },
     },
   });
@@ -160,6 +171,109 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   };
 
+  // Export notes as PNG using html2canvas
+  const handleExportNotes = async () => {
+    if (!editor) return;
+
+    try {
+      // Get the TipTap editor element
+      const editorElement = document.querySelector('.ProseMirror') as HTMLElement;
+      if (!editorElement) {
+        console.error('Editor element not found');
+        return;
+      }
+
+      // Capture the editor content
+      const canvas = await html2canvas(editorElement, {
+        backgroundColor: 'var(--background)', // Theme-aware background
+        scale: 2, // Higher quality
+      });
+
+      // Convert to blob and download
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const date = new Date().toISOString().split('T')[0];
+        link.download = `canvas-notes-${date}.png`;
+        link.href = url;
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+    } catch (error) {
+      console.error('Failed to export notes:', error);
+    }
+  };
+
+  // Export drawing as PNG using tldraw's built-in method
+  const handleExportDrawing = async () => {
+    if (!drawingCanvasRef.current) return;
+
+    try {
+      const dataUrl = await drawingCanvasRef.current.captureImage();
+      if (!dataUrl) {
+        console.error('Failed to capture drawing');
+        return;
+      }
+
+      // Convert data URL to blob and download
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const date = new Date().toISOString().split('T')[0];
+      link.download = `canvas-drawing-${date}.png`;
+      link.href = url;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export drawing:', error);
+    }
+  };
+
+  // Handle template selection
+  const handleTemplateSelect = (templateId: string) => {
+    // If there's existing content and it's not blank template, show confirmation
+    if (content.trim() && templateId !== 'blank') {
+      setSelectedTemplate(templateId);
+      setShowTemplateConfirm(true);
+      setShowTemplates(false);
+    } else {
+      applyTemplate(templateId);
+      setShowTemplates(false);
+    }
+  };
+
+  const applyTemplate = (templateId: string) => {
+    const template = CANVAS_TEMPLATES.find(t => t.id === templateId);
+    if (template) {
+      setContent(template.content);
+      if (editor) {
+        editor.commands.setContent(template.content);
+      }
+    }
+  };
+
+  // Add AI suggestion to canvas
+  const handleAddSuggestion = (suggestionText: string) => {
+    if (!editor) return;
+
+    // Get current content and append suggestion
+    const currentContent = content;
+    const newContent = currentContent + suggestionText;
+
+    setContent(newContent);
+    editor.commands.setContent(newContent);
+
+    // Scroll to bottom to show new content
+    setTimeout(() => {
+      const editorElement = document.querySelector('.ProseMirror') as HTMLElement;
+      if (editorElement) {
+        editorElement.scrollTop = editorElement.scrollHeight;
+      }
+    }, 100);
+  };
+
   // Capture drawing snapshot when switching away from draw mode
   const handleModeChange = async (newMode: 'notes' | 'draw') => {
     // If switching away from draw mode, capture the current drawing
@@ -206,7 +320,7 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
 
   return (
     <div
-      className="h-full bg-card border-l border-border flex flex-col relative shadow-2xl"
+      className="relative flex h-full flex-col border-l border-border bg-background"
       style={{ width: `${width}px` }}
     >
       {/* Resize Handle */}
@@ -232,27 +346,27 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
       />
 
       {/* Header — single consolidated bar */}
-      <div className="flex items-center justify-between px-3 h-11 border-b border-border bg-card">
+      <div className="flex h-14 items-center justify-between border-b border-border bg-background px-4">
         {/* Left: close arrow + mode pills */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <Button
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="h-7 w-7"
+            className="size-8 rounded-lg text-muted-foreground [&_svg]:size-4 [&_svg]:stroke-[1.75]"
             aria-label="Close canvas panel"
             title="Close canvas panel"
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
 
-          <div className="flex gap-0.5 p-0.5 bg-[hsl(0,0%,8%)] rounded-md">
+          <div className="inline-flex h-10 items-center rounded-xl bg-muted p-1">
             <button
               type="button"
               onClick={() => handleModeChange('notes')}
-              className={`px-2.5 py-0.5 text-xs font-medium rounded transition-colors duration-150 ${
+              className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors duration-150 ${
                 mode === 'notes'
-                  ? 'bg-[hsl(0,0%,18%)] text-foreground'
+                  ? 'bg-background text-foreground'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -261,9 +375,9 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
             <button
               type="button"
               onClick={() => handleModeChange('draw')}
-              className={`px-2.5 py-0.5 text-xs font-medium rounded transition-colors duration-150 ${
+              className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors duration-150 ${
                 mode === 'draw'
-                  ? 'bg-[hsl(0,0%,18%)] text-foreground'
+                  ? 'bg-background text-foreground'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -272,19 +386,95 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
           </div>
         </div>
 
-        {/* Right: settings + history icons */}
-        <div className="flex items-center gap-0.5">
+        {/* Right: templates + AI brainstorming + export + settings + history icons */}
+        <div className="flex items-center gap-1">
+          {/* Templates (Notes mode only) */}
+          {mode === 'notes' && (
+            <DropdownMenu open={showTemplates} onOpenChange={setShowTemplates}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 rounded-lg text-muted-foreground [&_svg]:size-4 [&_svg]:stroke-[1.75]"
+                  aria-label="Canvas templates"
+                  title="Canvas templates"
+                >
+                  <FileText className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <div className="p-2">
+                  <span className="text-xs font-medium text-foreground">Templates</span>
+                </div>
+                <DropdownMenuSeparator />
+                {CANVAS_TEMPLATES.map((template) => (
+                  <button
+                    key={template.id}
+                    onClick={() => handleTemplateSelect(template.id)}
+                    className="w-full text-left px-3 py-2 hover:bg-accent transition-colors duration-150"
+                  >
+                    <div className="text-sm font-medium text-foreground">{template.name}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{template.description}</div>
+                  </button>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
+          {/* AI Brainstorming (Notes mode only) */}
+          {mode === 'notes' && activeChat && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowAISuggestions(!showAISuggestions)}
+              className="size-8 rounded-lg text-muted-foreground [&_svg]:size-4 [&_svg]:stroke-[1.75]"
+              aria-label="AI Brainstorming"
+              title="AI Brainstorming"
+            >
+              <Sparkles className={`h-4 w-4 ${showAISuggestions ? 'text-foreground' : ''}`} />
+            </Button>
+          )}
+
+          {/* Mermaid Diagram (Notes mode only) */}
+          {mode === 'notes' && editor && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                editor.chain().focus().setMermaid('graph TD\n  A[Start] --> B[Process]\n  B --> C[Decision]\n  C -->|Yes| D[Success]\n  C -->|No| E[Retry]\n  E --> B').run()
+              }}
+              className="size-8 rounded-lg text-muted-foreground [&_svg]:size-4 [&_svg]:stroke-[1.75]"
+              aria-label="Insert Mermaid diagram"
+              title="Insert Mermaid diagram"
+            >
+              <GitBranch className="h-4 w-4" />
+            </Button>
+          )}
+
+          {/* Export Button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={mode === 'notes' ? handleExportNotes : handleExportDrawing}
+            disabled={mode === 'notes' ? !content.trim() : false}
+            className="size-8 rounded-lg text-muted-foreground [&_svg]:size-4 [&_svg]:stroke-[1.75]"
+            aria-label={`Export ${mode} as PNG`}
+            title={`Export ${mode} as PNG`}
+          >
+            <Download className="h-4 w-4" />
+          </Button>
+
           {/* Canvas Settings */}
           <DropdownMenu open={showSettings} onOpenChange={setShowSettings}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7"
+                className="size-8 rounded-lg text-muted-foreground [&_svg]:size-4 [&_svg]:stroke-[1.75]"
                 aria-label="Canvas settings"
                 title="Canvas settings"
               >
-                <Settings className="h-3.5 w-3.5" />
+                <Settings className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-72">
@@ -330,11 +520,11 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
               size="icon"
               onClick={() => setShowHistoryMenu(!showHistoryMenu)}
               disabled={mode === 'notes' ? history.length === 0 : drawingHistory.length === 0}
-              className="h-7 w-7"
+              className="size-8 rounded-lg text-muted-foreground [&_svg]:size-4 [&_svg]:stroke-[1.75]"
               aria-label="View history"
               title="View history"
             >
-              <Clock className="h-3.5 w-3.5" />
+              <Clock className="h-4 w-4" />
             </Button>
 
             {showHistoryMenu && mode === 'notes' && history.length > 0 && (
@@ -452,13 +642,25 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 overflow-hidden bg-card">
+      <div className="flex-1 overflow-hidden bg-card relative">
         {mode === 'notes' ? (
           <ScrollArea className="h-full">
             <EditorContent editor={editor} className="h-full" />
           </ScrollArea>
         ) : (
           <DrawingCanvas ref={drawingCanvasRef} />
+        )}
+
+        {/* AI Suggestions Panel (Notes mode only) */}
+        {mode === 'notes' && showAISuggestions && activeChat && (
+          <AISuggestionsPanel
+            canvasContent={content}
+            canvasType={canvasType}
+            onAddSuggestion={handleAddSuggestion}
+            onClose={() => setShowAISuggestions(false)}
+            provider={activeChat.provider}
+            model={activeChat.model}
+          />
         )}
       </div>
 
@@ -490,6 +692,25 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
           setShowDrawingClearConfirm(false);
         }}
         onCancel={() => setShowDrawingClearConfirm(false)}
+      />
+      <ConfirmDialog
+        isOpen={showTemplateConfirm}
+        title="Replace Current Content?"
+        message="This will replace your current canvas content with the selected template. Your current content will be lost unless you've saved it."
+        confirmLabel="Apply Template"
+        cancelLabel="Cancel"
+        variant="warning"
+        onConfirm={() => {
+          if (selectedTemplate) {
+            applyTemplate(selectedTemplate);
+          }
+          setShowTemplateConfirm(false);
+          setSelectedTemplate(null);
+        }}
+        onCancel={() => {
+          setShowTemplateConfirm(false);
+          setSelectedTemplate(null);
+        }}
       />
     </div>
   );

@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react'
 import InputsView from './InputsView'
 import OutputView from './OutputView'
 import TemplateEditor from './TemplateEditor'
+import BatchView from './BatchView'
+import CompetitorAnalysisView from './CompetitorAnalysisView'
+import AnalyticsView from './AnalyticsView'
 import { useTemplateStore } from '../../stores/templateStore'
 import type { UserInputs } from '../../types/template'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -18,7 +21,7 @@ import { Badge } from '@/components/ui/badge'
 import { ChevronDown, Star, Archive } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-type TabId = 'inputs' | 'output' | 'template'
+type TabId = 'inputs' | 'output' | 'template' | 'batch' | 'competitor' | 'analytics'
 
 interface PackagingToolProps {
   onSendToChat?: (prompt: string) => void
@@ -91,16 +94,25 @@ export default function PackagingTool({ onSendToChat }: PackagingToolProps) {
     .sort((a, b) => a.order - b.order)
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full flex-col bg-background">
       {/* Tabs */}
-      <div className="flex items-center justify-between gap-1 px-6 py-3 border-b border-border bg-secondary/30">
+      <div className="flex items-center justify-between gap-3 border-b border-border/70 px-6 py-3">
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabId)} className="flex-1">
-          <TabsList className="h-9">
+          <TabsList className="h-auto flex-wrap">
             <TabsTrigger value="inputs" data-flow-name="tab-inputs" className="text-sm">
               Inputs
             </TabsTrigger>
             <TabsTrigger value="output" data-flow-name="tab-output" className="text-sm">
               Output
+            </TabsTrigger>
+            <TabsTrigger value="competitor" data-flow-name="tab-competitor" className="text-sm">
+              Competitor
+            </TabsTrigger>
+            <TabsTrigger value="analytics" data-flow-name="tab-analytics" className="text-sm">
+              Analytics
+            </TabsTrigger>
+            <TabsTrigger value="batch" data-flow-name="tab-batch" className="text-sm">
+              Batch
             </TabsTrigger>
             <TabsTrigger value="template" data-flow-name="tab-template" className="text-sm">
               Template
@@ -115,7 +127,7 @@ export default function PackagingTool({ onSendToChat }: PackagingToolProps) {
               variant="outline"
               size="sm"
               data-flow-name="btn-presets-input"
-              className="gap-2"
+              className="gap-2 rounded-lg"
             >
               <Archive className="size-4" />
               Presets
@@ -254,12 +266,29 @@ export default function PackagingTool({ onSendToChat }: PackagingToolProps) {
             setUserInputs={setUserInputs}
             onGenerate={handleGenerate}
             onSendToAI={onSendToChat ? handleSendToAI : undefined}
+            generatePrompt={generatePrompt}
           />
         )}
         {activeTab === 'output' && (
           <OutputView
             generatedPrompt={generatedPrompt}
+            transcript={userInputs.transcript}
             onBack={() => setActiveTab('inputs')}
+            onSendToChat={onSendToChat}
+          />
+        )}
+        {activeTab === 'competitor' && (
+          <CompetitorAnalysisView
+            onSendToChat={onSendToChat}
+          />
+        )}
+        {activeTab === 'analytics' && (
+          <AnalyticsView />
+        )}
+        {activeTab === 'batch' && (
+          <BatchView
+            userInputs={userInputs}
+            generatePrompt={generatePrompt}
             onSendToChat={onSendToChat}
           />
         )}

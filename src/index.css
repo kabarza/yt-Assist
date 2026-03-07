@@ -1,62 +1,170 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "tw-animate-css";
 
-@layer base {
-  :root {
-    /* Vercel-inspired: Pure black base, high contrast */
-    --background: 0 0% 0%;            /* #000000 - pure black */
-    --foreground: 0 0% 100%;          /* #ffffff - pure white */
+@custom-variant dark (&:where(.dark, .dark *));
 
-    --card: 0 0% 4%;                  /* #0a0a0a - slightly lifted */
-    --card-foreground: 0 0% 100%;
+/* ── Light theme ────────────────────────────────────────────────────────── */
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
 
-    --popover: 0 0% 7%;               /* #111111 - popover bg */
-    --popover-foreground: 0 0% 100%;
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
 
-    --primary: 0 0% 100%;             /* White as primary (Vercel style) */
-    --primary-foreground: 0 0% 0%;    /* Black text on white */
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
 
-    --secondary: 0 0% 10%;            /* #1a1a1a */
-    --secondary-foreground: 0 0% 100%;
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
 
-    --muted: 0 0% 15%;                /* #262626 */
-    --muted-foreground: 0 0% 60%;     /* #999999 - gray text */
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
 
-    --accent: 0 0% 15%;               /* #262626 */
-    --accent-foreground: 0 0% 100%;
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
 
-    --destructive: 0 84% 60%;         /* Red for errors */
-    --destructive-foreground: 0 0% 100%;
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
 
-    --border: 0 0% 15%;               /* #262626 - subtle borders */
-    --input: 0 0% 15%;                /* #262626 */
-    --ring: 0 0% 100%;                /* White focus ring */
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
 
-    --radius: 0.375rem;               /* Slightly smaller radius */
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
 
-    /* Sidebar specific */
-    --sidebar: 0 0% 4%;               /* #0a0a0a */
-    --sidebar-foreground: 0 0% 100%;
-    --sidebar-border: 0 0% 15%;
+  --radius: 0.625rem;
 
-    /* Accent action color — white */
-    --success: 0 0% 100%;            /* #ffffff */
-  }
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  --success: oklch(0.27 0 0);
 }
 
+/* ── Dark theme ───────────────────────────────────────────────────────── */
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.556 0 0);
+
+  --radius: 0.625rem;
+
+  --sidebar: oklch(0.145 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.922 0 0);
+  --sidebar-primary-foreground: oklch(0.205 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: oklch(0.556 0 0);
+
+  --success: oklch(0.92 0 0);
+}
+
+/* ── Theme mapping for Tailwind v4 ──────────────────────────────────── */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-success: var(--success);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* ── Base reset ─────────────────────────────────────────────────────── */
 * {
-  margin: 0;
-  padding: 0;
   box-sizing: border-box;
+}
+
+html {
+  background-color: var(--background);
 }
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background-color: hsl(var(--background));
-  color: hsl(var(--foreground));
+  background-color: var(--background);
+  color: var(--foreground);
   overflow: hidden;
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background-color: color-mix(in srgb, var(--primary) 85%, white 15%);
+  color: var(--primary-foreground);
+}
+
+#root {
+  height: 100dvh;
 }
 
 /* Custom scrollbar — thin */
@@ -70,12 +178,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--muted-foreground) / 0.4);
+  background: color-mix(in srgb, var(--muted-foreground) 40%, transparent);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.7);
+  background: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
 }
 
 /* Markdown table styles */
@@ -87,24 +195,24 @@ body {
 }
 
 .prose thead {
-  background-color: hsl(var(--secondary));
-  border-bottom: 2px solid hsl(var(--border));
+  background-color: var(--secondary);
+  border-bottom: 2px solid var(--border);
 }
 
 .prose th {
   padding: 0.75rem 1rem;
   text-align: left;
   font-weight: 600;
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 
 .prose td {
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid hsl(var(--border));
+  border-bottom: 1px solid var(--border);
 }
 
 .prose tbody tr:hover {
-  background-color: hsl(var(--accent));
+  background-color: var(--accent);
 }
 
 .prose tbody tr:last-child td {
@@ -113,14 +221,18 @@ body {
 
 /* Code block styles */
 .prose pre {
-  background-color: hsl(var(--secondary));
+  background-color: var(--secondary);
   border-radius: 0.5rem;
   padding: 1rem;
-  overflow-x: auto;
+  margin: 1rem 0;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .prose code {
-  background-color: hsl(var(--muted));
+  background-color: var(--muted);
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
   font-size: 0.875em;
@@ -129,15 +241,18 @@ body {
 .prose pre code {
   background-color: transparent;
   padding: 0;
+  white-space: inherit;
+  overflow-wrap: inherit;
+  word-break: inherit;
 }
 
 /* TipTap Editor Styles */
 .ProseMirror {
   min-height: 100%;
   outline: none;
-  font-size: 13px;
-  line-height: 1.6;
-  color: hsl(var(--foreground));
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  color: var(--foreground);
 }
 
 .ProseMirror p {
@@ -151,7 +266,7 @@ body {
 .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
   pointer-events: none;
   height: 0;
 }
@@ -161,7 +276,7 @@ body {
   font-weight: 600;
   margin-top: 1.25em;
   margin-bottom: 0.5em;
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 
 .ProseMirror h1:first-child {
@@ -173,7 +288,7 @@ body {
   font-weight: 600;
   margin-top: 1em;
   margin-bottom: 0.375em;
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 
 .ProseMirror h2:first-child {
@@ -185,7 +300,7 @@ body {
   font-weight: 600;
   margin-top: 0.875em;
   margin-bottom: 0.25em;
-  color: hsl(var(--foreground) / 0.85);
+  color: color-mix(in srgb, var(--foreground) 85%, transparent);
 }
 
 .ProseMirror h3:first-child {
@@ -209,8 +324,8 @@ body {
 }
 
 .ProseMirror code {
-  background-color: hsl(var(--muted));
-  color: hsl(var(--foreground) / 0.9);
+  background-color: var(--muted);
+  color: color-mix(in srgb, var(--foreground) 90%, transparent);
   padding: 0.1rem 0.35rem;
   border-radius: 0.25rem;
   font-size: 0.85em;
@@ -218,10 +333,13 @@ body {
 }
 
 .ProseMirror pre {
-  background-color: hsl(var(--secondary));
+  background-color: var(--secondary);
   border-radius: 0.5rem;
   padding: 0.75rem 1rem;
-  overflow-x: auto;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   margin-top: 0.5em;
   margin-bottom: 0.75em;
 }
@@ -232,59 +350,62 @@ body {
   border-radius: 0;
   font-size: 0.8125em;
   line-height: 1.5;
+  white-space: inherit;
+  overflow-wrap: inherit;
+  word-break: inherit;
 }
 
 .ProseMirror blockquote {
-  border-left: 3px solid hsl(var(--border));
+  border-left: 3px solid var(--border);
   padding-left: 0.875em;
   margin: 0.5em 0;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
 }
 
 /* tldraw/Excalidraw Theme Overrides */
 .excalidraw,
 .tldraw {
-  --color-primary: hsl(var(--primary));
-  --color-primary-darker: hsl(var(--muted-foreground));
-  --color-primary-darkest: hsl(var(--secondary));
-  --color-primary-light: hsl(var(--foreground));
+  --color-primary: var(--primary);
+  --color-primary-darker: var(--muted-foreground);
+  --color-primary-darkest: var(--secondary);
+  --color-primary-light: var(--foreground);
 }
 
 .excalidraw .App-menu_top,
 .tldraw .tlui-menu {
-  background-color: hsl(var(--secondary)) !important;
-  border-bottom: 1px solid hsl(var(--border)) !important;
+  background-color: var(--secondary) !important;
+  border-bottom: 1px solid var(--border) !important;
 }
 
 .excalidraw .panelColumn,
 .tldraw .tlui-panel {
-  background-color: hsl(var(--secondary)) !important;
+  background-color: var(--secondary) !important;
 }
 
 .excalidraw button,
 .excalidraw .ToolIcon,
 .tldraw button {
-  color: hsl(var(--muted-foreground)) !important;
+  color: var(--muted-foreground) !important;
 }
 
 .excalidraw button:hover,
 .excalidraw .ToolIcon:hover,
 .tldraw button:hover {
-  background-color: hsl(var(--accent)) !important;
-  color: hsl(var(--foreground)) !important;
+  background-color: var(--accent) !important;
+  color: var(--foreground) !important;
 }
 
 .excalidraw .ToolIcon_type_radio.is-active,
 .excalidraw button.active,
 .tldraw button[data-state="selected"] {
-  background-color: hsl(var(--accent)) !important;
-  color: hsl(var(--foreground)) !important;
+  background-color: var(--accent) !important;
+  color: var(--foreground) !important;
 }
 
 .excalidraw .Island,
 .tldraw .tlui-island {
-  background-color: hsl(var(--secondary)) !important;
-  border: 1px solid hsl(var(--border)) !important;
+  background-color: var(--secondary) !important;
+  border: 1px solid var(--border) !important;
 }
 
 .excalidraw input,
@@ -293,31 +414,89 @@ body {
 .tldraw input,
 .tldraw textarea,
 .tldraw select {
-  background-color: hsl(var(--background)) !important;
-  color: hsl(var(--foreground)) !important;
-  border-color: hsl(var(--border)) !important;
+  background-color: var(--background) !important;
+  color: var(--foreground) !important;
+  border-color: var(--border) !important;
 }
 
 .excalidraw .dropdown-menu,
 .tldraw .tlui-menu {
-  background-color: hsl(var(--secondary)) !important;
-  border: 1px solid hsl(var(--border)) !important;
+  background-color: var(--secondary) !important;
+  border: 1px solid var(--border) !important;
 }
 
 .excalidraw .dropdown-menu-item:hover,
 .tldraw .tlui-menu-item:hover {
-  background-color: hsl(var(--accent)) !important;
+  background-color: var(--accent) !important;
 }
 
-/* Typography utilities */
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+/* Draw mode island layout (match the watermark island direction) */
+.drawing-canvas-root {
+  --draw-island-gap: 8px;
+  --draw-main-menu-size: 48px;
+  --draw-zoom-island-width: 64px;
+}
 
-  .text-pretty {
-    text-wrap: pretty;
-  }
+.drawing-canvas-root .drawing-main-menu-island {
+  position: absolute !important;
+  top: auto !important;
+  left: calc(env(safe-area-inset-left) + 8px) !important;
+  right: auto !important;
+  bottom: calc(env(safe-area-inset-bottom) + 8px) !important;
+  border: 2px solid var(--tl-color-background) !important;
+  border-radius: var(--tl-radius-4) !important;
+  background-color: color-mix(in srgb, var(--tl-color-background) 62%, transparent) !important;
+  width: fit-content !important;
+  overflow: hidden !important;
+  transform: none !important;
+  z-index: var(--tl-layer-panels) !important;
+}
+
+.drawing-canvas-root .drawing-main-menu-island .tlui-row,
+.drawing-canvas-root .drawing-zoom-island .tlui-row {
+  padding: 0 !important;
+}
+
+.drawing-canvas-root .drawing-main-menu-island .tlui-row > *,
+.drawing-canvas-root .drawing-zoom-island .tlui-row > * {
+  margin: 0 !important;
+}
+
+.drawing-canvas-root .drawing-main-menu-island .tlui-button {
+  width: var(--draw-main-menu-size) !important;
+  min-width: var(--draw-main-menu-size) !important;
+  height: var(--draw-main-menu-size) !important;
+  padding: 0 !important;
+}
+
+.drawing-canvas-root .drawing-zoom-island {
+  position: absolute !important;
+  top: auto !important;
+  left: auto !important;
+  right: calc(env(safe-area-inset-right) + 8px) !important;
+  bottom: calc(env(safe-area-inset-bottom) + 8px) !important;
+  width: fit-content !important;
+  min-width: var(--draw-zoom-island-width) !important;
+  border: 2px solid var(--tl-color-background) !important;
+  border-radius: var(--tl-radius-4) !important;
+  background-color: color-mix(in srgb, var(--tl-color-background) 62%, transparent) !important;
+  overflow: hidden !important;
+  transform: none !important;
+  z-index: var(--tl-layer-panels) !important;
+}
+
+.drawing-canvas-root .drawing-zoom-island::before {
+  display: none !important;
+}
+
+.drawing-canvas-root .tlui-main-toolbar--horizontal .tlui-main-toolbar__extras {
+  display: flex;
+  justify-content: center;
+}
+
+.drawing-canvas-root .tlui-main-toolbar--horizontal .tlui-main-toolbar__extras__controls {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
 }
 
 /* Respect prefers-reduced-motion */

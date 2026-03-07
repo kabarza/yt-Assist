@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, MessageSquare } from 'lucide-react'
+import { ChevronDown, Eye, MessageSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -12,6 +12,7 @@ interface InputsViewProps {
   setUserInputs: React.Dispatch<React.SetStateAction<UserInputs>>
   onGenerate: () => void
   onSendToAI?: () => void
+  generatePrompt: (inputs: UserInputs) => string
 }
 
 export default function InputsView({
@@ -19,8 +20,10 @@ export default function InputsView({
   setUserInputs,
   onGenerate,
   onSendToAI,
+  generatePrompt,
 }: InputsViewProps) {
   const [moreOptionsExpanded, setMoreOptionsExpanded] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
 
   const updateField = <K extends keyof UserInputs>(field: K, value: UserInputs[K]) => {
     setUserInputs(prev => ({ ...prev, [field]: value }))
@@ -30,30 +33,43 @@ export default function InputsView({
     ? userInputs.transcript.trim().split(/\s+/).length
     : 0
 
-  return (
-    <div className="p-6 max-w-4xl mx-auto space-y-4">
+  const hasTranscript = userInputs.transcript.trim().length > 0
 
-      {/* Transcript Input */}
-      <div>
-        <div className="flex justify-between items-center mb-2">
-          <label className="block text-sm font-medium text-foreground">
-            Transcript <span className="text-destructive">*</span>
-          </label>
-          <span className="text-xs text-muted-foreground">{wordCount} words</span>
+  return (
+    <div className="mx-auto max-w-5xl space-y-10 p-6 sm:p-10">
+      <section className="space-y-4">
+        <div className="flex items-end justify-between gap-4 border-b border-border/70 pb-3">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight text-foreground">Transcript</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Start with the source material. Everything else stays optional.
+            </p>
+          </div>
+          <span className="shrink-0 text-sm text-muted-foreground">{wordCount} words</span>
         </div>
+
         <Textarea
           value={userInputs.transcript}
           onChange={(e) => updateField('transcript', e.target.value)}
           placeholder="Paste your video transcript here..."
           data-flow-name="input-transcript"
-          className="h-32 resize-none font-mono text-sm"
+          className="h-40 resize-none border-border/80 font-mono text-sm leading-6"
         />
-      </div>
+      </section>
 
-      {/* Always Visible Inputs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-2">
+      <section className="space-y-4">
+        <div className="flex items-end justify-between gap-4 border-b border-border/70 pb-3">
+          <div>
+            <h3 className="text-lg font-semibold tracking-tight text-foreground">Core Constraints</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Add the few terms or ideas that the output should orbit around.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
             Must-Include Words
           </label>
           <Input
@@ -63,10 +79,10 @@ export default function InputsView({
             placeholder="e.g., Tutorial, Review"
             data-flow-name="input-must-include"
           />
-        </div>
+          </div>
 
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-2">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
             Nice-To-Include Words
           </label>
           <Input
@@ -76,29 +92,30 @@ export default function InputsView({
             placeholder="e.g., Brand names, topics"
             data-flow-name="input-nice-include"
           />
+          </div>
         </div>
-      </div>
+      </section>
 
       {/* More Options Collapsible Section */}
-      <div>
-        <Button
-          variant="ghost"
+      <section className="space-y-4 border-t border-border/70 pt-6">
+        <button
+          type="button"
           onClick={() => setMoreOptionsExpanded(!moreOptionsExpanded)}
-          className="gap-2 text-sm font-medium p-2 h-auto"
+          className="flex items-center gap-2 text-sm font-medium text-foreground"
         >
           <ChevronDown className={cn(
-            "h-4 w-4 transition-transform",
+            "h-4 w-4 transition-transform text-muted-foreground",
             moreOptionsExpanded && "rotate-180"
           )} />
           More Options
-        </Button>
+        </button>
 
         {moreOptionsExpanded && (
-          <div className="mt-3 space-y-3">
+          <div className="space-y-6 pt-2">
             {/* Avoid Words and Hashtag Count */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-foreground">
                   Avoid Words/Phrases
                 </label>
                 <Input
@@ -110,8 +127,8 @@ export default function InputsView({
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-foreground">
                   Hashtag Count
                 </label>
                 <Input
@@ -127,8 +144,8 @@ export default function InputsView({
             </div>
 
             {/* Name Options */}
-            <div className="px-3 py-2 bg-card border border-border rounded-lg">
-              <div className={cn("flex items-center gap-3", userInputs.includeName && "mb-2")}>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
                 <Switch
                   id="includeName"
                   checked={userInputs.includeName}
@@ -151,8 +168,8 @@ export default function InputsView({
             </div>
 
             {/* Additional Context */}
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-foreground">
                 Additional Context / Notes
               </label>
               <Textarea
@@ -165,33 +182,58 @@ export default function InputsView({
             </div>
           </div>
         )}
-      </div>
+      </section>
+
+      {/* Prompt Preview */}
+      <section className="space-y-4 border-t border-border/70 pt-6">
+        <button
+          type="button"
+          onClick={() => setShowPreview(!showPreview)}
+          className="flex w-full items-center justify-between text-left"
+        >
+          <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <Eye className="h-4 w-4" />
+            Preview Prompt
+          </span>
+          <ChevronDown className={cn(
+            "h-4 w-4 transition-transform",
+            showPreview && "rotate-180"
+          )} />
+        </button>
+        {showPreview && (
+          <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
+            <pre className="text-xs text-muted-foreground font-mono whitespace-pre-wrap max-h-96 overflow-auto">
+              {generatePrompt(userInputs)}
+            </pre>
+          </div>
+        )}
+      </section>
 
       {/* Action Buttons */}
-      <div className="flex gap-3">
+      <section className="flex gap-3 border-t border-border/70 pt-6">
         <Button
           onClick={onGenerate}
-          disabled={!userInputs.transcript.trim()}
+          disabled={!hasTranscript}
           data-flow-name="btn-generate"
           size="lg"
-          className="flex-1 text-lg font-bold py-6"
+          className="h-12 flex-1 text-base font-semibold"
         >
           Generate Prompt
         </Button>
         {onSendToAI && (
           <Button
             onClick={onSendToAI}
-            disabled={!userInputs.transcript.trim()}
+            disabled={!hasTranscript}
             data-flow-name="btn-send-to-ai"
             variant="secondary"
             size="lg"
-            className="gap-2 px-6 py-6 text-lg font-bold"
+            className="h-12 gap-2 px-6 text-base font-semibold"
           >
             <MessageSquare className="h-5 w-5" />
             Send to AI
           </Button>
         )}
-      </div>
+      </section>
     </div>
   )
 }

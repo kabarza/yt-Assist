@@ -23,14 +23,15 @@ No outputs selected.`
   }
 
   const outputSpecs: Record<string, (qty: number) => string> = {
-    'core-hook': () => `CORE HOOK
+    'core-hook': () => `CORE explanation
 Exactly 2 lines:
 - Line 1: What the video is REALLY about
 - Line 2: Why someone should click`,
 
     'descriptions': (qty) => `YOUTUBE DESCRIPTIONS
 - Quantity: ${qty} descriptions
-- Format: Each is ONE paragraph
+- Format: Code block for each one of the 3
+- Each is ONE paragraph
 - Must start with: "In this video we talk about ..."
 - Must mention: X, Y, and Z (3 concrete things from the transcript)
 - Length: Not too short, no filler`,
@@ -56,8 +57,10 @@ Exactly 2 lines:
 - Titles: 1-4 words, Title Case, specific not vague`,
 
     'hashtags': (qty) => `HASHTAGS
+- Format: Code block for easy copy-paste
 - Quantity: ${qty}
-- Relevant only — no spam`,
+- Relevant only — no spam
+- Format: use space between them: #1 #2 #3`,
   }
 
   const specs = enabledOutputs.map((output, idx) => {

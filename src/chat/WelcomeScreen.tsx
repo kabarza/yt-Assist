@@ -22,13 +22,21 @@ const SUGGESTIONS = [
 
 export default function WelcomeScreen({ onSuggestion }: WelcomeScreenProps) {
   return (
-    <div className="w-full max-w-2xl mx-auto">
-      <h1 className="text-2xl font-semibold text-foreground text-center text-balance mb-6">
-        How can I help you?
-      </h1>
+    <div className="mx-auto w-full max-w-3xl space-y-8">
+      <div className="space-y-3 text-center">
+        <p className="text-sm font-medium uppercase tracking-[0.16em] text-muted-foreground">
+          AI Workspace
+        </p>
+        <h1 className="text-balance text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+          How can I help you today?
+        </h1>
+        <p className="mx-auto max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
+          Start with a quick prompt or drop into one of the YouTube workflows already built into the app.
+        </p>
+      </div>
 
       {/* Category pills */}
-      <div className="flex flex-wrap justify-center gap-2 mb-8">
+      <div className="flex flex-wrap justify-center gap-2.5">
         {CATEGORIES.map((cat) => {
           const Icon = cat.icon
           return (
@@ -36,9 +44,9 @@ export default function WelcomeScreen({ onSuggestion }: WelcomeScreenProps) {
               key={cat.id}
               type="button"
               onClick={() => onSuggestion(`Help me with YouTube ${cat.label.toLowerCase()}`)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-border text-sm text-muted-foreground hover:border-accent hover:text-foreground transition-colors duration-150"
+              className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card px-4 py-2 text-sm font-medium text-foreground transition-[color,box-shadow,border-color] duration-150 hover:border-ring/40 hover:bg-accent/60 hover:text-foreground"
             >
-              <Icon className="h-3.5 w-3.5" />
+              <Icon className="h-4 w-4 text-muted-foreground" />
               {cat.label}
             </button>
           )
@@ -46,15 +54,15 @@ export default function WelcomeScreen({ onSuggestion }: WelcomeScreenProps) {
       </div>
 
       {/* Suggestion prompts */}
-      <div className="flex flex-col gap-1">
+      <div className="grid gap-3 sm:grid-cols-2">
         {SUGGESTIONS.map((suggestion, i) => (
           <button
             key={i}
             type="button"
             onClick={() => onSuggestion(suggestion)}
-            className="text-left px-2 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors duration-150 rounded-md hover:bg-muted/50"
+            className="rounded-2xl border border-border/70 bg-card/80 px-4 py-4 text-left text-sm text-foreground transition-[color,box-shadow,border-color] duration-150 hover:border-ring/30 hover:bg-accent/50"
           >
-            {suggestion}
+            <span className="block leading-6">{suggestion}</span>
           </button>
         ))}
       </div>

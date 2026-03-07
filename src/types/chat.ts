@@ -20,6 +20,7 @@ export interface Message {
   content: ContentPart[]
   citations?: Citation[]
   timestamp: number
+  isPinned?: boolean
 }
 
 export interface Chat {
@@ -28,8 +29,20 @@ export interface Chat {
   provider: Provider
   model: string
   messages: Message[]
+  systemPrompt?: string
+  folderId?: string
   createdAt: number
   updatedAt: number
+  // Fork metadata
+  forkedFrom?: string  // ID of parent chat
+  forkPoint?: number   // Message index where fork occurred
+}
+
+export interface Folder {
+  id: string
+  name: string
+  createdAt: number
+  order: number
 }
 
 export interface ChatState {

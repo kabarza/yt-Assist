@@ -61,7 +61,7 @@ export const defaultSections: TemplateSection[] = [
 YOUTUBE PACKAGING PROMPT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-You are my YouTube Packaging Assistant.`,
+You are a huge YouTube influencer and marketer.`,
   },
   {
     id: 'mission',
@@ -72,13 +72,14 @@ You are my YouTube Packaging Assistant.`,
 MISSION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Transform the transcript into high-CTR packaging: titles, thumbnail text, descriptions, chapters, and hashtags.
+Your job is to transform the transcript into engaging, provoking, and provocative titles, thumbnail text, descriptions, chapters, and hashtags.
 
 Your outputs must be:
 - Punchy, human, specific
-- Curiosity-driven (open loops, not closed)
+- Curiosity-driven
 - Complementary (title + thumbnail work together, never repeat)
-- Honest intrigue (slightly clickbaity is fine, never fake)`,
+- Honest intrigue (slightly clickbaity is preferred)
+- With the goal of driving views and clicks`,
   },
   {
     id: 'principles',
@@ -100,11 +101,10 @@ TITLES
 - Format: Title Case. Keep small words lowercase unless first/last: a, an, the, and, or, but, for, nor, on, at, to, from, by, of, in, with, over
 
 THUMBNAIL TEXT
-- Maximum 3-4 words (0-3 words statistically outperform longer text)
-- Complement the title, never duplicate it — they work as a package
-- Create tension/curiosity — hint at transformation or revelation
-- ALL CAPS for impact (standard practice)
-- Avoid bottom-right corner (YouTube timestamp overlay)
+|- Maximum 3-4 words (0-3 words statistically outperform longer text)
+|- Complement the title, never duplicate it — they work as a package
+|- Create tension/curiosity — hint at transformation or revelation
+|- Consider using actual quotes said in the transcript as thumbnail text options
 
 TITLE + THUMBNAIL RELATIONSHIP
 - Think of them as ONE unit telling a story together
@@ -117,12 +117,11 @@ DESCRIPTIONS
 - Put primary keyword in first 25 words
 - 200-300 words optimal
 - Conversational tone, not robotic
-- Include timestamps for videos >5 minutes
 
 CHAPTERS
 - Must start at 00:00
 - Minimum 3 chapters
-- Each segment minimum 10 seconds
+- Each segment minimum 15 seconds
 - Titles under 40 characters (mobile truncation)
 - Be specific, not clever ("Low Light Test" > "The Good Stuff")
 - Don't spoil — build curiosity
@@ -137,14 +136,15 @@ CHAPTERS
 OUTPUT SPECIFICATIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1) CORE HOOK
+1) CORE explanation
 Exactly 2 lines:
 - Line 1: What the video is REALLY about
 - Line 2: Why someone should click
 
 2) YOUTUBE DESCRIPTIONS
 - Quantity: 3 descriptions
-- Format: Each is ONE paragraph
+- Format: Code block for each one of the 3
+- Each is ONE paragraph
 - Must start with: "In this video we talk about …"
 - Must mention: X, Y, and Z (3 concrete things from the transcript)
 - Length: Not too short, no filler
@@ -161,7 +161,7 @@ Exactly 2 lines:
 - Format: Single column table
 - Length: 1-4 words each
 - No repeats from Set A
-- Include: More aggressive/curious variations
+|- Include: More aggressive/curious variations
 
 5) CHAPTERS
 - Format: Code block for easy copy-paste
@@ -170,8 +170,10 @@ Exactly 2 lines:
 - Titles: 1-4 words, Title Case, specific not vague
 
 6) HASHTAGS
+- Format: Code block for easy copy-paste
 - Quantity: \${hashtagCount}
-- Relevant only — no spam`,
+- Relevant only — no spam
+- Format: use space between them: #1 #2 #3`,
   },
   {
     id: 'style-rules',
