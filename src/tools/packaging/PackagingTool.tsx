@@ -264,7 +264,7 @@ export default function PackagingTool({ onSendToChat }: PackagingToolProps) {
         }
       />
 
-      <div className="border-b border-border/70 px-5 py-2.5">
+      <div className="px-5 py-2.5">
         <ToolContainer className="space-y-0">
           <Tabs
             value={activeView}

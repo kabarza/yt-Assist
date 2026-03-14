@@ -18,7 +18,7 @@ const TOOL_BUTTON_BASE_CLASS =
   'group relative isolate flex h-11 w-full cursor-pointer items-center justify-center overflow-hidden rounded-[1.1rem] border border-transparent text-sidebar-foreground/64 transition-[background-color,color,border-color,box-shadow] duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar'
 
 const TOOL_BUTTON_ACTIVE_CLASS =
-  "border-sidebar-border/80 bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_10px_22px_rgba(0,0,0,0.14)] before:pointer-events-none before:absolute before:bottom-2.5 before:left-1.5 before:top-2.5 before:w-[2px] before:rounded-full before:bg-sidebar-accent-foreground/72 before:content-[''] hover:border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+  'border-sidebar-border/80 bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_10px_22px_rgba(0,0,0,0.14)] hover:border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
 
 const TOOL_BUTTON_IDLE_CLASS =
   'bg-transparent hover:border-sidebar-border/55 hover:bg-sidebar-accent/72 hover:text-sidebar-foreground'

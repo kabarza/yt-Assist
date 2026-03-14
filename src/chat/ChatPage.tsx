@@ -782,7 +782,7 @@ export default function ChatPage({
               />
             ) : showTitleVariants ? (
               <div className="flex-1 overflow-y-auto px-4 pb-6 pt-5 sm:px-6">
-                <div className="mx-auto w-full max-w-5xl">
+                <div className="w-full max-w-[44rem]">
                   <TitleVariantsView
                     variants={titleVariants}
                     isGenerating={isGeneratingVariants}
@@ -797,7 +797,7 @@ export default function ChatPage({
                 onScroll={handleMessagesScroll}
                 className="flex-1 overflow-y-auto px-4 pb-16 pt-5 sm:px-6"
               >
-                <div className="mx-auto w-full max-w-[48rem] space-y-5">
+                <div className="w-full max-w-[44rem] space-y-5">
                   {activeChat.messages.map((message, index) => {
                     const hasSubsequentMessages = index < activeChat.messages.length - 1
                     return (
@@ -839,7 +839,7 @@ export default function ChatPage({
 
             {/* Input — floats at bottom */}
             <div className="relative z-10 -mt-8 w-full px-4 pb-5 sm:px-6">
-              <div className="mx-auto w-full max-w-[49.5rem]">
+              <div className="w-full max-w-[45rem]">
                 <ChatInput
                   onSend={handleSend}
                   disabled={isStreaming}
@@ -884,11 +884,11 @@ export default function ChatPage({
         ) : (
           /* Welcome / empty state */
           <div className="flex-1 flex flex-col">
-            <div className="flex flex-1 items-center justify-center px-6 py-10">
+            <div className="flex flex-1 items-center px-6 py-10">
               <WelcomeScreen onSuggestion={handleSuggestion} />
             </div>
             <div className="relative z-10 -mt-8 w-full px-4 pb-5 sm:px-6">
-              <div className="mx-auto w-full max-w-[49.5rem]">
+              <div className="w-full max-w-[45rem]">
                 <ChatInput
                   onSend={handleWelcomeSend}
                   disabled={isStreaming}

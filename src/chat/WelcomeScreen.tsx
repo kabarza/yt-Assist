@@ -22,21 +22,21 @@ const SUGGESTIONS = [
 
 export default function WelcomeScreen({ onSuggestion }: WelcomeScreenProps) {
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-8">
-      <div className="space-y-3 text-center">
+    <div className="w-full max-w-[44rem] space-y-8">
+      <div className="space-y-3 text-left">
         <p className="text-sm font-medium uppercase tracking-[0.16em] text-muted-foreground">
           AI Workspace
         </p>
         <h1 className="text-balance text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
           How can I help you today?
         </h1>
-        <p className="mx-auto max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
+        <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
           Start with a quick prompt or drop into one of the YouTube workflows already built into the app.
         </p>
       </div>
 
       {/* Category pills */}
-      <div className="flex flex-wrap justify-center gap-2.5">
+      <div className="flex flex-wrap justify-start gap-2.5">
         {CATEGORIES.map((cat) => {
           const Icon = cat.icon
           return (

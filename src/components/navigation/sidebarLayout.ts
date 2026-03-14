@@ -5,7 +5,7 @@ export const SIDEBAR_FOLDER_ROW_CLASS =
   'group grid w-full min-w-0 grid-cols-[minmax(0,1fr)_2.25rem_1.625rem_1.625rem] items-center gap-x-1 overflow-hidden px-1'
 
 export const SIDEBAR_CHAT_ROW_CLASS =
-  'group grid w-full min-w-0 max-w-full grid-cols-[minmax(0,1fr)_1.625rem_1.625rem] items-center gap-x-1 overflow-hidden rounded-[0.84rem] px-1.5 transition-[background-color,color] duration-150'
+  'group grid w-full min-w-0 max-w-full grid-cols-[minmax(0,1fr)_1.625rem_1.625rem] items-center gap-x-1 overflow-hidden rounded-[0.84rem] px-0.5 transition-[background-color,color] duration-150'
 
 export const SIDEBAR_COUNT_CLASS =
   'justify-self-end text-right text-[11px] font-medium tabular-nums text-muted-foreground/78'

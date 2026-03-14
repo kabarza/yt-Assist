@@ -16,6 +16,7 @@ export interface ImageAssetMeta {
   createdAt: number
   sourceTurnId?: string
   name?: string
+  isReusable?: boolean
 }
 
 export interface StoredImageAsset extends ImageAssetMeta {
@@ -54,9 +55,23 @@ export interface ImageDraft {
   referenceAssetIds: string[]
   origin: ImageTurnOrigin
   sourceTurnId?: string
+  pipelineId?: string | null
 }
 
-export const IMAGE_THREAD_SNAPSHOT_VERSION = 1 as const
+export interface ImagePipeline {
+  id: string
+  name: string
+  prompt: string
+  model: ImageGenerationModel
+  count: number
+  aspectRatio: ImageAspectRatio
+  imageSize: ImageSize
+  pinnedAssetIds: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export const IMAGE_THREAD_SNAPSHOT_VERSION = 2 as const
 
 export interface ImageThreadSnapshot {
   version: typeof IMAGE_THREAD_SNAPSHOT_VERSION
@@ -64,6 +79,7 @@ export interface ImageThreadSnapshot {
   draft: ImageDraft
   gridZoom: ImageGridZoom
   queuePaused: boolean
+  pipelines: ImagePipeline[]
 }
 
 export interface ImageGenerationModelOption {
@@ -93,6 +109,7 @@ export const IMAGE_GRID_ZOOM_OPTIONS: Array<{ id: ImageGridZoom; label: string }
   { id: 'list', label: 'List' },
   { id: 'detail', label: 'Detail' },
 ]
+export const MAX_IMAGE_REFERENCE_COUNT = 14
 
 export const DEFAULT_IMAGE_DRAFT: ImageDraft = {
   prompt: '',
@@ -102,4 +119,5 @@ export const DEFAULT_IMAGE_DRAFT: ImageDraft = {
   imageSize: '1K',
   referenceAssetIds: [],
   origin: 'new',
+  pipelineId: null,
 }

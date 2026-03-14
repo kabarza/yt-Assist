@@ -252,7 +252,7 @@ export default function App() {
         />
 
         {activeTool.panelKind === 'chat' && isContextPanelOpen ? (
-          <aside className="hidden w-[17.5rem] shrink-0 overflow-hidden border-r border-sidebar-border/70 bg-sidebar md:flex">
+          <aside className="relative z-10 hidden w-64 shrink-0 overflow-hidden border-r border-sidebar-border/70 bg-sidebar md:flex">
             <ChatContextPanel
               chats={chats}
               folders={folders}

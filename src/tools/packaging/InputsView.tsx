@@ -195,7 +195,7 @@ export default function InputsView({
   return (
     <div className="space-y-7 px-5 py-5">
       <section className="space-y-4">
-        <div className="flex items-end justify-between gap-4 border-b border-border/70 pb-3">
+        <div className="flex items-end justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold tracking-tight text-foreground">Transcript</h2>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -246,7 +246,7 @@ export default function InputsView({
             </div>
 
             {isUrlMode ? (
-              <div className="space-y-3 border-t border-border/60 pt-3">
+              <div className="space-y-3 pt-1">
                 <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
                   <Input
                     id="transcript-url"
@@ -294,7 +294,7 @@ export default function InputsView({
             ) : null}
 
             {hasTranscriptStatus ? (
-              <div className="space-y-3 border-t border-border/60 pt-3">
+              <div className="space-y-3 pt-1">
                 {transcriptImport.error ? (
                   <p className="text-sm text-destructive">{transcriptImport.error}</p>
                 ) : null}
@@ -336,7 +336,7 @@ export default function InputsView({
             ) : null}
           </div>
 
-          <div className="border-t border-border/60">
+          <div>
             <Textarea
               value={userInputs.transcript}
               onChange={(e) => updateField('transcript', e.target.value)}
@@ -351,7 +351,7 @@ export default function InputsView({
       </section>
 
       <section className="space-y-3">
-        <div className="flex items-end justify-between gap-4 border-b border-border/70 pb-3">
+        <div className="flex items-end justify-between gap-4">
           <div>
             <h3 className="text-base font-semibold tracking-tight text-foreground">Core Constraints</h3>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -391,7 +391,7 @@ export default function InputsView({
         </div>
       </section>
 
-      <section className="space-y-3 border-t border-border/70 pt-5">
+      <section className="space-y-3 pt-3">
         <button
           type="button"
           onClick={() => setMoreOptionsExpanded(!moreOptionsExpanded)}
@@ -480,7 +480,7 @@ export default function InputsView({
         )}
       </section>
 
-      <section className="space-y-3 border-t border-border/70 pt-5">
+      <section className="space-y-3 pt-2">
         <button
           type="button"
           onClick={() => setShowPreview(!showPreview)}
@@ -504,7 +504,7 @@ export default function InputsView({
         )}
       </section>
 
-      <section className="flex gap-3 border-t border-border/70 pt-5">
+      <section className="flex gap-3 pt-3">
         <Button
           onClick={onGenerate}
           disabled={!hasTranscript}

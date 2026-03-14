@@ -83,8 +83,8 @@ export default function SettingsDialog({ isOpen, onClose, triggerOrigin = null }
     }
 
     const rect = dialogNode.getBoundingClientRect()
-    const originX = triggerOrigin.left + (triggerOrigin.width / 2) - rect.left
-    const originY = triggerOrigin.top + (triggerOrigin.height / 2) - rect.top
+    const originX = Math.max(0, Math.min(rect.width, triggerOrigin.left - rect.left))
+    const originY = Math.max(0, Math.min(rect.height, triggerOrigin.top + triggerOrigin.height - rect.top))
 
     dialogNode.style.transformOrigin = `${originX}px ${originY}px`
   }, [isOpen, triggerOrigin])

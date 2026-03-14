@@ -1208,7 +1208,7 @@ export default function ImageGenerationTool() {
               ref={composerOverlayRef}
               className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:px-6"
             >
-              <div className="pointer-events-auto mx-auto w-full max-w-[49.5rem]">
+              <div className="pointer-events-auto mx-auto w-full max-w-[58rem]">
                 <div className="pt-1">
                   <div
                     className="overflow-hidden rounded-[1.45rem] border border-border/70 bg-background/96 shadow-[0_10px_30px_hsl(var(--background)/0.45)] backdrop-blur-sm transition-[border-color,box-shadow] duration-200 focus-within:border-ring/40"
@@ -1278,8 +1278,8 @@ export default function ImageGenerationTool() {
                       />
                     </div>
 
-                    <div className="flex flex-wrap items-end gap-2.5 px-4 pb-3 pt-1 sm:flex-nowrap">
-                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5">
+                    <div className="flex flex-wrap items-end gap-2 px-4 pb-3 pt-1 md:flex-nowrap">
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                         <Button type="button" variant="ghost" size="sm" className="h-9 shrink-0 rounded-[0.85rem]" onClick={() => fileInputRef.current?.click()}>
                           <Upload className="h-4 w-4" />
                           Add images
@@ -1348,30 +1348,28 @@ export default function ImageGenerationTool() {
                         </Select>
                       </div>
 
-                      <div className="ml-auto flex min-w-[12rem] shrink-0 flex-col items-stretch gap-2 sm:items-end">
-                        {runningTurn ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-8 rounded-[0.85rem] px-3 text-xs sm:w-auto"
-                            onClick={handleCancelCurrent}
-                          >
-                            <Square className="h-3.5 w-3.5 fill-current" />
-                            Cancel current
-                          </Button>
-                        ) : null}
+                      <div className="ml-auto flex shrink-0 flex-col items-start gap-1 md:items-end">
                         <Button
                           type="button"
                           onClick={() => {
                             void handleEnqueue()
                           }}
                           disabled={!isHydrated || !draft.prompt.trim()}
-                          className="h-9 min-w-32 rounded-[0.85rem] w-full sm:w-auto"
+                          className="h-9 min-w-[11.25rem] rounded-[0.85rem]"
                         >
                           {runningTurn ? <Sparkles className="h-4 w-4" /> : <WandSparkles className="h-4 w-4" />}
                           {runningTurn || queuePaused ? 'Add to queue' : 'Generate'}
                         </Button>
+                        {runningTurn ? (
+                          <button
+                            type="button"
+                            onClick={handleCancelCurrent}
+                            className="inline-flex h-7 items-center gap-1.5 rounded-[0.75rem] px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                          >
+                            <Square className="h-3 w-3 fill-current" />
+                            Cancel current
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   </div>

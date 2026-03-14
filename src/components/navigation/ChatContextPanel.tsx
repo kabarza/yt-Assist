@@ -504,13 +504,13 @@ export function ChatContextPanel({
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div className={cn('flex h-full min-h-0 flex-col overflow-hidden bg-sidebar', className)}>
+      <div className={cn('relative z-10 flex h-full min-h-0 flex-col overflow-hidden bg-sidebar', className)}>
         <div className="relative z-20 border-b border-border/55 px-3 py-2.5">
-          <div className="relative">
+          <div className="relative px-1">
             <div className="relative h-9">
               <div
                 className={cn(
-                  'absolute inset-0 flex items-center gap-2 transition-[opacity,transform,filter] duration-150 ease-out',
+                  'absolute inset-0 grid min-w-0 grid-cols-[minmax(0,1fr)_2.25rem_2.25rem] items-center gap-2 transition-[opacity,transform,filter] duration-150 ease-out',
                   isSearchExpanded
                     ? 'pointer-events-none -translate-x-2 opacity-0 blur-[1px]'
                     : 'translate-y-0 scale-100 opacity-100',
@@ -521,10 +521,10 @@ export function ChatContextPanel({
                   variant="ghost"
                   onClick={onNewChat}
                   tabIndex={isSearchExpanded ? -1 : 0}
-                  className="h-9 flex-1 justify-start rounded-[0.95rem] bg-foreground/[0.045] px-2.75 text-[12.5px] font-medium text-foreground shadow-[inset_0_0_0_1px_hsl(var(--border)/0.45)] transition-[background-color,box-shadow] duration-150 hover:bg-foreground/[0.07]"
+                  className="h-9 min-w-0 justify-start rounded-[0.95rem] bg-foreground/[0.045] px-2.75 text-[12.5px] font-medium text-foreground shadow-[inset_0_0_0_1px_hsl(var(--border)/0.45)] transition-[background-color,box-shadow] duration-150 hover:bg-foreground/[0.07]"
                 >
                   <Plus className="mr-2 h-3.5 w-3.5 text-foreground/65" />
-                  New chat
+                  <span className="truncate">New chat</span>
                 </Button>
 
                 <Tooltip>
@@ -558,7 +558,7 @@ export function ChatContextPanel({
                       tabIndex={isSearchExpanded ? -1 : 0}
                       aria-label="Search chats"
                       aria-expanded={isSearchExpanded}
-                      className="h-9 w-9 rounded-[0.95rem] bg-foreground/[0.045] text-muted-foreground shadow-[inset_0_0_0_1px_hsl(var(--border)/0.45)] transition-[background-color,color,transform] duration-150 hover:bg-foreground/[0.07] hover:text-foreground"
+                      className="h-9 w-9 shrink-0 rounded-[0.95rem] bg-foreground/[0.045] text-muted-foreground shadow-[inset_0_0_0_1px_hsl(var(--border)/0.45)] transition-[background-color,color,transform] duration-150 hover:bg-foreground/[0.07] hover:text-foreground"
                     >
                       <Search className="h-3.5 w-3.5" />
                     </Button>
@@ -571,7 +571,7 @@ export function ChatContextPanel({
 
               <div
                 className={cn(
-                  'absolute inset-y-0 right-0 flex justify-end overflow-hidden transition-[width,opacity,transform] duration-150 ease-out',
+                  'absolute inset-0 min-w-0 overflow-hidden transition-[width,opacity,transform] duration-150 ease-out',
                   isSearchExpanded
                     ? 'w-full translate-x-0 opacity-100'
                     : 'pointer-events-none w-9 translate-x-0 opacity-0',
@@ -616,7 +616,7 @@ export function ChatContextPanel({
               <div
                 ref={projectComposerRef}
                 className={cn(
-                  'pointer-events-auto origin-top-right rounded-[1.15rem] border border-border/65 bg-background/95 p-3 shadow-[0_26px_48px_-24px_hsl(var(--foreground)/0.55)] backdrop-blur-sm transition-[opacity,transform] duration-150 ease-out',
+                  'pointer-events-auto w-full origin-top-right rounded-[1.15rem] border border-border/65 bg-background/95 p-3 shadow-[0_26px_48px_-24px_hsl(var(--foreground)/0.55)] backdrop-blur-sm transition-[opacity,transform] duration-150 ease-out',
                   isCreatingProject
                     ? 'translate-y-0 scale-100 opacity-100'
                     : 'pointer-events-none -translate-y-1 scale-[0.985] opacity-0',
