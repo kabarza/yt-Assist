@@ -165,7 +165,7 @@ export default function OutputView({ generatedPrompt, transcript, onBack, onSend
 
   if (!currentPrompt && history.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-center p-6">
+      <div className="flex h-full flex-col items-center justify-center p-6 text-center">
         <p className="text-muted-foreground mb-4">No prompt generated yet</p>
         <Button
           onClick={onBack}
@@ -179,7 +179,7 @@ export default function OutputView({ generatedPrompt, transcript, onBack, onSend
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6 sm:p-8">
+    <div className="space-y-5 px-5 py-5">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 pb-4">
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm text-muted-foreground">
@@ -246,7 +246,7 @@ export default function OutputView({ generatedPrompt, transcript, onBack, onSend
 
       {/* History Panel */}
       {showHistory && history.length > 0 && (
-        <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
+        <div className="rounded-[0.9rem] border border-border/70 bg-muted/18 p-4">
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs text-muted-foreground">
               {isComparing ? `Select 2 outputs to compare (${selectedForComparison.length}/2 selected)` : 'Recent Outputs'}

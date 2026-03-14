@@ -70,8 +70,8 @@ interface ChatStore {
   togglePinMessage: (chatId: string, messageId: string) => void
 
   // Folder management
-  createFolder: (name: string) => string
-  renameFolder: (id: string, name: string) => void
+  createFolder: (name: string, systemPrompt?: string) => string
+  renameFolder: (id: string, name: string, systemPrompt?: string) => void
   deleteFolder: (id: string) => void
   moveToFolder: (chatId: string, folderId: string | null) => void
   reorderFolders: (folderIds: string[]) => void
@@ -362,11 +362,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   // Folder management
-  createFolder: (name) => {
+  createFolder: (name, systemPrompt) => {
     const id = generateId()
     const newFolder: Folder = {
       id,
       name,
+      systemPrompt: systemPrompt?.trim() || undefined,
       createdAt: Date.now(),
       order: get().folders.length,
     }
@@ -376,9 +377,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     return id
   },
 
-  renameFolder: (id, name) => {
+  renameFolder: (id, name, systemPrompt) => {
     const folders = get().folders.map(f =>
-      f.id === id ? { ...f, name } : f
+      f.id === id
+        ? { ...f, name, systemPrompt: systemPrompt?.trim() || undefined }
+        : f
     )
     saveFolders(folders)
     set({ folders })

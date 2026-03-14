@@ -135,7 +135,7 @@ export default function ChatMessage({ message, onRegenerate, onEdit, onFork, onT
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
-        <div className="max-w-[75%] space-y-2">
+        <div className="max-w-[75%] space-y-2.5">
           {isEditing ? (
             <div className="space-y-2">
               <Textarea
@@ -184,7 +184,7 @@ export default function ChatMessage({ message, onRegenerate, onEdit, onFork, onT
                   return (
                     <div
                       key={i}
-                      className="inline-block rounded-2xl bg-primary px-4 py-3 text-sm leading-6 text-primary-foreground"
+                      className="inline-block rounded-[1.35rem] bg-foreground/[0.07] px-4 py-3 text-sm leading-6 text-foreground shadow-[inset_0_0_0_1px_hsl(var(--border)/0.55)]"
                     >
                       {part.text}
                     </div>

@@ -1,21 +1,22 @@
-import { useState } from 'react'
+import { useState, type ComponentType } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Loader2, TrendingUp, TrendingDown, Lightbulb, BarChart3, Copy } from 'lucide-react'
+import {
+  Loader2,
+  TrendingUp,
+  TrendingDown,
+  Lightbulb,
+  BarChart3,
+  Copy,
+} from 'lucide-react'
 import { requestChatText } from '@/utils/apiClient'
+import { usePackagingSessionStore } from '@/stores/packagingSessionStore'
+import type { AnalyticsInsights } from '@/types/toolSessions'
 import { toast } from 'sonner'
 
 interface AnalyticsViewProps {
   onBack?: () => void
-}
-
-interface AnalyticsInsights {
-  topPerformers: string
-  underperforming: string
-  patterns: string
-  retention: string
-  recommendations: string
 }
 
 const ANALYTICS_PROMPT = `Analyze the following YouTube analytics data and provide detailed insights:
@@ -75,11 +76,11 @@ function parseInsights(response: string): AnalyticsInsights {
 function InsightSection({
   title,
   content,
-  icon: Icon
+  icon: Icon,
 }: {
   title: string
   content: string
-  icon: React.ComponentType<{ className?: string }>
+  icon: ComponentType<{ className?: string }>
 }) {
   const [copied, setCopied] = useState(false)
 
@@ -97,32 +98,24 @@ function InsightSection({
   if (!content) return null
 
   return (
-    <div className="p-4 border border-border rounded-lg bg-card">
-      <div className="flex items-center justify-between mb-3">
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Icon className="h-5 w-5 text-accent" />
           <h3 className="font-semibold text-foreground">{title}</h3>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleCopy}
-          className="gap-2"
-        >
+        <Button variant="ghost" size="sm" onClick={handleCopy} className="gap-2">
           {copied ? 'Copied!' : <Copy className="h-3.5 w-3.5" />}
         </Button>
       </div>
-      <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-        {content}
-      </div>
+      <div className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{content}</div>
     </div>
   )
 }
 
 export default function AnalyticsView({ onBack }: AnalyticsViewProps) {
-  const [analyticsData, setAnalyticsData] = useState('')
-  const [insights, setInsights] = useState<AnalyticsInsights | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const { analyticsData, insights, setAnalyticsData, setInsights } = usePackagingSessionStore()
 
   const handleAnalyze = async () => {
     if (!analyticsData.trim()) {
@@ -137,16 +130,19 @@ export default function AnalyticsView({ onBack }: AnalyticsViewProps) {
       const result = await requestChatText({
         provider: 'openai',
         model: 'gpt-4.1',
-        messages: [{
-          role: 'user',
-          content: [{
-            type: 'text',
-            text: ANALYTICS_PROMPT + '\n\n' + analyticsData.slice(0, 10000),
-          }],
-        }],
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: ANALYTICS_PROMPT + '\n\n' + analyticsData.slice(0, 10000),
+              },
+            ],
+          },
+        ],
       })
-      const parsedInsights = parseInsights(result.text)
-      setInsights(parsedInsights)
+      setInsights(parseInsights(result.text || ''))
       toast.success('Analysis complete!')
     } catch (error) {
       console.error('Analysis error:', error)
@@ -185,42 +181,31 @@ ${insights.recommendations}`
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
-      {/* Header */}
+    <div className="space-y-5 px-5 py-5">
       <div>
-        <h2 className="text-xl font-semibold text-foreground">YouTube Analytics Insights</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Paste your YouTube Studio analytics data to get AI-powered insights and recommendations
+        <h2 className="text-lg font-semibold text-foreground">YouTube Analytics Insights</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Paste YouTube Studio data and keep the analysis available when you switch tools.
         </p>
       </div>
 
-      {/* Input Section */}
-      {!insights && (
+      {!insights ? (
         <div className="space-y-4">
           <div>
-            <label htmlFor="analytics-data" className="text-sm font-medium text-foreground mb-2 block">
+            <label htmlFor="analytics-data" className="mb-2 block text-sm font-medium text-foreground">
               Analytics Data
             </label>
             <Textarea
               id="analytics-data"
               value={analyticsData}
-              onChange={(e) => setAnalyticsData(e.target.value)}
-              placeholder="Paste your YouTube analytics data here (CSV, table, or plain text from YouTube Studio)...
-
-Example formats:
-- Video title, Views, CTR, Avg view duration, Impressions
-- Copy from YouTube Studio analytics page
-- Export as CSV and paste here"
+              onChange={(event) => setAnalyticsData(event.target.value)}
+              placeholder="Paste your YouTube analytics data here (CSV, table, or plain text from YouTube Studio)..."
               className="min-h-[300px] font-mono text-xs"
             />
           </div>
 
           <div className="flex gap-2">
-            <Button
-              onClick={handleAnalyze}
-              disabled={isAnalyzing || !analyticsData.trim()}
-              className="gap-2"
-            >
+            <Button onClick={handleAnalyze} disabled={isAnalyzing || !analyticsData.trim()} className="gap-2">
               {isAnalyzing ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -233,35 +218,15 @@ Example formats:
                 </>
               )}
             </Button>
-            {onBack && (
-              <Button variant="outline" onClick={onBack}>
-                Back
-              </Button>
-            )}
-          </div>
-
-          <div className="p-4 bg-muted/50 rounded-lg border border-border">
-            <p className="text-xs text-muted-foreground">
-              <strong className="text-foreground">Tip:</strong> For best results, include data like video titles,
-              views, CTR (%), average view duration, impressions, and any other metrics from YouTube Studio.
-              The AI will analyze patterns and provide actionable recommendations.
-            </p>
+            {onBack ? <Button variant="outline" onClick={onBack}>Back</Button> : null}
           </div>
         </div>
-      )}
-
-      {/* Insights Display */}
-      {insights && (
+      ) : (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold text-foreground">Analysis Results</h3>
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={copyAllInsights}
-                className="gap-2"
-              >
+              <Button variant="outline" size="sm" onClick={copyAllInsights} className="gap-2">
                 <Copy className="h-3.5 w-3.5" />
                 Copy All
               </Button>
@@ -280,31 +245,19 @@ Example formats:
 
           <ScrollArea className="max-h-[calc(100vh-300px)]">
             <div className="space-y-4 pr-4">
-              <InsightSection
-                title="Top Performers"
-                content={insights.topPerformers}
-                icon={TrendingUp}
-              />
+              <InsightSection title="Top Performers" content={insights.topPerformers} icon={TrendingUp} />
               <InsightSection
                 title="Underperforming Content"
                 content={insights.underperforming}
                 icon={TrendingDown}
               />
-              <InsightSection
-                title="Success Patterns"
-                content={insights.patterns}
-                icon={BarChart3}
-              />
+              <InsightSection title="Success Patterns" content={insights.patterns} icon={BarChart3} />
               <InsightSection
                 title="Retention & CTR Trends"
                 content={insights.retention}
                 icon={BarChart3}
               />
-              <InsightSection
-                title="Recommendations"
-                content={insights.recommendations}
-                icon={Lightbulb}
-              />
+              <InsightSection title="Recommendations" content={insights.recommendations} icon={Lightbulb} />
             </div>
           </ScrollArea>
         </div>

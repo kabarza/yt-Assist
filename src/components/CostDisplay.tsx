@@ -31,21 +31,31 @@ interface ConversationCostProps {
   messages: Message[]
   modelId: string
   showBreakdown?: boolean
+  compact?: boolean
 }
 
-export function ConversationCost({ messages, modelId, showBreakdown = true }: ConversationCostProps) {
+export function ConversationCost({
+  messages,
+  modelId,
+  showBreakdown = true,
+  compact = false,
+}: ConversationCostProps) {
   const { totalCost, inputCost, outputCost, inputTokens, outputTokens } = calculateConversationCost(
     messages,
     modelId
   )
+
+  const containerClassName = compact
+    ? 'inline-flex h-7 shrink-0 cursor-help items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2.5 text-[11px] text-muted-foreground whitespace-nowrap'
+    : 'inline-flex h-10 shrink-0 cursor-help items-center gap-1.5 rounded-xl border border-border/70 bg-background px-3 text-[13px] text-muted-foreground whitespace-nowrap'
 
   if (showBreakdown) {
     return (
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="inline-flex h-10 shrink-0 cursor-help items-center gap-1.5 rounded-xl border border-border/70 bg-background px-3 text-[13px] text-muted-foreground whitespace-nowrap">
-              <DollarSign className="h-3 w-3" />
+            <div className={containerClassName}>
+              <DollarSign className={compact ? 'h-2.5 w-2.5' : 'h-3 w-3'} />
               <span className="font-mono font-medium">{formatCost(totalCost)}</span>
             </div>
           </TooltipTrigger>
@@ -60,8 +70,8 @@ export function ConversationCost({ messages, modelId, showBreakdown = true }: Co
   }
 
   return (
-    <div className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-border/70 bg-background px-3 text-[13px] text-muted-foreground whitespace-nowrap">
-      <DollarSign className="h-3 w-3" />
+    <div className={containerClassName}>
+      <DollarSign className={compact ? 'h-2.5 w-2.5' : 'h-3 w-3'} />
       <span className="font-mono font-medium">{formatCost(totalCost)}</span>
     </div>
   )

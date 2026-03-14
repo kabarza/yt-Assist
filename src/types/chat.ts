@@ -41,6 +41,7 @@ export interface Chat {
 export interface Folder {
   id: string
   name: string
+  systemPrompt?: string
   createdAt: number
   order: number
 }

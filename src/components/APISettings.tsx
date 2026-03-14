@@ -233,7 +233,7 @@ function EndpointConfigSection({ provider }: { provider: ProviderConfig }) {
 
 export default function APISettings() {
   return (
-    <div className="space-y-6 p-6 max-w-4xl mx-auto">
+    <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-foreground">API Endpoints</h2>
         <p className="text-sm text-muted-foreground mt-1">

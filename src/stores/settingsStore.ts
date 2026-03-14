@@ -8,6 +8,8 @@ export interface AppSettings {
   // API Keys
   openaiApiKey?: string
   anthropicApiKey?: string
+  geminiApiKey?: string
+  supadataApiKey?: string
 
   // Default Model
   defaultProvider: Provider

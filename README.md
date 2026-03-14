@@ -7,7 +7,7 @@ A web app with YouTube helper tools. Built with React, Vite, and Tailwind CSS.
 ### YouTube Packaging Tool
 Generate high-CTR titles, thumbnails, descriptions, chapters, and hashtags from your video transcript.
 
-- **Inputs View**: Paste your transcript and customize generation settings
+- **Inputs View**: Paste your transcript or import it from a YouTube URL, then customize generation settings
 - **Output View**: Copy the generated prompt or send it directly to AI Chat
 - **Template Editor**: Drag-and-drop to reorder sections, toggle sections on/off, and edit content
 
@@ -20,17 +20,24 @@ Chat with Claude or GPT directly in the app with support for images.
 - **Chat History**: All chats are stored locally and can be accessed anytime
 - **Streaming Responses**: See AI responses in real-time as they're generated
 
+### Image Gen
+Generate images with Google's Nano Banana 2 or Nano Banana Pro models.
+
+- **Text-to-Image**: Generate images from prompts alone
+- **Image + Text**: Use one or more reference images to guide generations
+- **Multiple Results**: Request 1, 2, or 4 outputs in one run
+- **Browse & Download**: Review generated images in-app and download each result
+
 ## Development
 
 ```bash
 # Install dependencies
 npm install
 
-# Run frontend only (use the local Vite URL printed in the terminal,
-# typically http://localhost:5173 when that port is free)
+# Run frontend only at http://localhost:5103
 npm run dev
 
-# Run API server only (defaults to http://localhost:3000)
+# Run API server only for development (http://localhost:3000)
 npm run dev:server
 
 # Run both frontend and API server
@@ -41,23 +48,25 @@ npm run build
 npm run preview
 ```
 
-`vite.config.ts` proxies `/api` requests to `http://localhost:3000`. The frontend dev port is not pinned in tracked config, so the canonical local frontend URL should be taken from Vite's startup output.
+`vite.config.ts` pins the frontend dev server to `http://127.0.0.1:5103` and proxies `/api` requests to `http://localhost:3000`. The standalone production server defaults to `http://localhost:5103`.
 
 ## Environment Variables
 
 Create a `.env` file in the root directory:
 
 ```env
-# Required for AI Chat functionality
+# Required for AI features you use
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=AIza...
+SUPADATA_API_KEY=sd-...
 
 # Optional
-# API server port (defaults to 3000)
-PORT=3000
+# API server port for the standalone server (defaults to 5103)
+PORT=5103
 ```
 
-If you override `PORT`, update the `/api` proxy target in `vite.config.ts` to match.
+`npm run dev:server` explicitly uses port `3000` so the frontend dev server can stay on `5103`. If you change the API dev port, update the `/api` proxy target in `vite.config.ts` to match.
 
 ## Deploy (Self-Hosted)
 
@@ -77,6 +86,8 @@ The production server serves the built frontend from `dist/` and exposes the AI 
 ## Deploy (Static Only)
 
 If you only need the Packaging Tool without AI Chat, deploy to any static host:
+
+Manual transcript paste works fine on a static deployment. Video URL transcript import requires the backend proxy so your Supadata key stays off the client.
 
 ### Vercel
 ```bash
@@ -164,3 +175,9 @@ Both endpoints accept:
   "stream": true
 }
 ```
+
+### POST /api/transcripts/import
+Imports a transcript from a supported YouTube URL and writes it into the Packaging transcript box.
+
+### GET /api/transcripts/import/:jobId
+Polls an in-progress transcript generation job when the provider needs extra time.

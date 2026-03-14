@@ -342,6 +342,9 @@ export function useTemplateStore() {
   const generatePreviewPrompt = useCallback((): string => {
     const mockInputs: UserInputs = {
       transcript: '[Your transcript will appear here]',
+      transcriptSourceMode: 'manual',
+      transcriptUrl: '',
+      transcriptIncludeTimestamps: true,
       mustInclude: '[Must-include words]',
       niceToInclude: '[Nice-to-include words]',
       avoidWords: '[Words to avoid]',

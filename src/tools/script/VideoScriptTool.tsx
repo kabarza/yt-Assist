@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
@@ -6,28 +7,14 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { FileText, Copy, Check, Sparkles, Clock, Film } from 'lucide-react'
+import { Copy, Check, Sparkles, Clock, Film } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { requestChatText } from '@/utils/apiClient'
 import { ToolBody, ToolContainer, ToolHeader, ToolShell } from '@/components/layout/ToolShell'
 import { toast } from 'sonner'
-
-type ScriptStyle = 'casual' | 'formal' | 'energetic' | 'educational'
-
-interface ScriptSection {
-  title: string
-  content: string
-  timing: string
-  brollSuggestions: string[]
-  transitions: string
-}
-
-interface GeneratedScript {
-  intro: ScriptSection
-  mainContent: ScriptSection[]
-  outro: ScriptSection
-  fullScript: string
-}
+import { parseScriptView, type ScriptView, updateViewSearchParams } from '@/navigation/views'
+import type { GeneratedScript, ScriptStyle } from '@/types/toolSessions'
+import { useScriptToolStore } from '@/stores/scriptToolStore'
 
 const styleDescriptions: Record<ScriptStyle, string> = {
   casual: 'Conversational and relatable',
@@ -37,14 +24,28 @@ const styleDescriptions: Record<ScriptStyle, string> = {
 }
 
 export default function VideoScriptTool() {
-  const [topic, setTopic] = useState('')
-  const [context, setContext] = useState('')
-  const [duration, setDuration] = useState('10')
-  const [style, setStyle] = useState<ScriptStyle>('casual')
-  const [keyPoints, setKeyPoints] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeView = parseScriptView(searchParams.get('view'))
   const [isGenerating, setIsGenerating] = useState(false)
-  const [generatedScript, setGeneratedScript] = useState<GeneratedScript | null>(null)
   const [copiedSection, setCopiedSection] = useState<string | null>(null)
+  const {
+    topic,
+    context,
+    duration,
+    style,
+    keyPoints,
+    generatedScript,
+    setTopic,
+    setContext,
+    setDuration,
+    setStyle,
+    setKeyPoints,
+    setGeneratedScript,
+  } = useScriptToolStore()
+
+  const setActiveView = (view: ScriptView) => {
+    setSearchParams(updateViewSearchParams(searchParams, view, 'input'))
+  }
 
   const handleGenerate = async () => {
     if (!topic.trim()) {
@@ -56,6 +57,7 @@ export default function VideoScriptTool() {
     try {
       const script = await generateScript(topic, context, duration, style, keyPoints)
       setGeneratedScript(script)
+      setActiveView('output')
       toast.success('Script generated successfully!')
     } catch (error) {
       toast.error('Failed to generate script')
@@ -66,29 +68,33 @@ export default function VideoScriptTool() {
   }
 
   const generateScript = async (
-    topic: string,
-    context: string,
-    duration: string,
-    style: ScriptStyle,
-    keyPoints: string
+    nextTopic: string,
+    nextContext: string,
+    nextDuration: string,
+    nextStyle: ScriptStyle,
+    nextKeyPoints: string,
   ): Promise<GeneratedScript> => {
     const styleInstructions = {
-      casual: 'Use a conversational, friendly tone. Speak directly to the viewer as if talking to a friend. Use contractions and natural language.',
-      formal: 'Maintain a professional, polished tone. Use complete sentences and sophisticated vocabulary. Be authoritative but approachable.',
-      energetic: 'Be enthusiastic and upbeat! Use exclamation points, dynamic language, and keep the energy high throughout.',
-      educational: 'Focus on clarity and instruction. Break down concepts step-by-step. Use examples and explanations that help viewers learn.',
+      casual:
+        'Use a conversational, friendly tone. Speak directly to the viewer as if talking to a friend. Use contractions and natural language.',
+      formal:
+        'Maintain a professional, polished tone. Use complete sentences and sophisticated vocabulary. Be authoritative but approachable.',
+      energetic:
+        'Be enthusiastic and upbeat! Use exclamation points, dynamic language, and keep the energy high throughout.',
+      educational:
+        'Focus on clarity and instruction. Break down concepts step-by-step. Use examples and explanations that help viewers learn.',
     }
 
-    const durationInt = parseInt(duration) || 10
-    const wordCount = durationInt * 150 // ~150 words per minute
+    const durationInt = parseInt(nextDuration, 10) || 10
+    const wordCount = durationInt * 150
 
     const prompt = `You are a professional YouTube video script writer. Generate a complete, detailed video script.
 
-Video Topic: ${topic}
-${context ? `Context/Additional Info: ${context}\n` : ''}
+Video Topic: ${nextTopic}
+${nextContext ? `Context/Additional Info: ${nextContext}\n` : ''}
 Target Duration: ${durationInt} minutes (~${wordCount} words)
-Script Style: ${style} - ${styleInstructions[style]}
-${keyPoints ? `Key Points to Cover:\n${keyPoints}\n` : ''}
+Script Style: ${nextStyle} - ${styleInstructions[nextStyle]}
+${nextKeyPoints ? `Key Points to Cover:\n${nextKeyPoints}\n` : ''}
 
 Generate a structured video script with the following sections:
 
@@ -126,17 +132,13 @@ Generate the complete script now:`
       model: 'gpt-4o',
       messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
     })
-    const scriptText = result.text?.trim() || ''
-
-    // Parse the script into structured sections
-    return parseScript(scriptText)
+    return parseScript(result.text?.trim() || '')
   }
 
   const parseScript = (scriptText: string): GeneratedScript => {
-    // Simple parsing - in production, this would be more sophisticated
     const sections = scriptText.split(/(?=\[[\d-]+)/g).filter(Boolean)
 
-    const intro: ScriptSection = {
+    const intro = {
       title: 'Intro/Hook',
       content: sections[0] || '',
       timing: '0:00-0:30',
@@ -144,15 +146,15 @@ Generate the complete script now:`
       transitions: extractTransitions(sections[0] || ''),
     }
 
-    const mainContent: ScriptSection[] = sections.slice(1, -1).map((section, idx) => ({
-      title: `Segment ${idx + 1}`,
+    const mainContent = sections.slice(1, -1).map((section, index) => ({
+      title: `Segment ${index + 1}`,
       content: section,
-      timing: `${idx + 1}:00-${idx + 2}:00`,
+      timing: `${index + 1}:00-${index + 2}:00`,
       brollSuggestions: extractBroll(section),
       transitions: extractTransitions(section),
     }))
 
-    const outro: ScriptSection = {
+    const outro = {
       title: 'Outro/CTA',
       content: sections[sections.length - 1] || '',
       timing: `${sections.length - 1}:00-${sections.length}:00`,
@@ -170,13 +172,12 @@ Generate the complete script now:`
 
   const extractBroll = (text: string): string[] => {
     const match = text.match(/B-ROLL:([^\n]+(?:\n(?!TRANSITION:)[^\n]+)*)/i)
-    if (match) {
-      return match[1]
-        .split(/[,\n]/)
-        .map(s => s.trim())
-        .filter(Boolean)
-    }
-    return []
+    if (!match) return []
+
+    return match[1]
+      .split(/[,\n]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
   }
 
   const extractTransitions = (text: string): string => {
@@ -200,13 +201,16 @@ Generate the complete script now:`
   return (
     <ToolShell>
       <ToolHeader
-        icon={FileText}
         title="Video Script Writer"
-        description="Generate complete, structured video scripts with scene breakdowns."
+        description="Write structured scripts with scene timing and keep the working draft intact across navigation."
       />
       <ToolBody className="overflow-y-auto">
         <ToolContainer>
-          <Tabs defaultValue="input" className="space-y-6">
+          <Tabs
+            value={activeView}
+            onValueChange={(value) => setActiveView(value as ScriptView)}
+            className="space-y-6"
+          >
             <TabsList className="grid w-full max-w-md grid-cols-2">
               <TabsTrigger value="input">Input</TabsTrigger>
               <TabsTrigger value="output" disabled={!generatedScript}>
@@ -214,11 +218,9 @@ Generate the complete script now:`
               </TabsTrigger>
             </TabsList>
 
-            {/* Input Tab */}
             <TabsContent value="input" className="space-y-6">
               <Card className="p-6">
                 <div className="space-y-4">
-                  {/* Topic */}
                   <div>
                     <Label htmlFor="topic" className="text-sm font-medium">
                       Video Topic *
@@ -226,30 +228,28 @@ Generate the complete script now:`
                     <Input
                       id="topic"
                       value={topic}
-                      onChange={(e) => setTopic(e.target.value)}
+                      onChange={(event) => setTopic(event.target.value)}
                       placeholder="e.g., How to Start a YouTube Channel in 2024"
                       className="mt-2"
                     />
                   </div>
 
-                  {/* Context */}
                   <div>
                     <Label htmlFor="context" className="text-sm font-medium">
                       Context (Optional)
                     </Label>
-                    <p className="text-xs text-muted-foreground mt-1 mb-2">
-                      Paste packaging output, video description, or additional context
+                    <p className="mb-2 mt-1 text-xs text-muted-foreground">
+                      Paste packaging output, video description, or additional context.
                     </p>
                     <Textarea
                       id="context"
                       value={context}
-                      onChange={(e) => setContext(e.target.value)}
+                      onChange={(event) => setContext(event.target.value)}
                       placeholder="Optional: Paste your video title, description, or chapters here..."
                       className="h-24 text-sm"
                     />
                   </div>
 
-                  {/* Duration and Style */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <Label htmlFor="duration" className="text-sm font-medium">
@@ -259,7 +259,7 @@ Generate the complete script now:`
                         id="duration"
                         type="number"
                         value={duration}
-                        onChange={(e) => setDuration(e.target.value)}
+                        onChange={(event) => setDuration(event.target.value)}
                         placeholder="10"
                         min="1"
                         max="60"
@@ -269,40 +269,43 @@ Generate the complete script now:`
 
                     <div>
                       <Label className="text-sm font-medium">Script Style</Label>
-                      <div className="grid grid-cols-2 gap-2 mt-2">
-                        {(Object.keys(styleDescriptions) as ScriptStyle[]).map((s) => (
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        {(Object.keys(styleDescriptions) as ScriptStyle[]).map((entry) => (
                           <button
-                            key={s}
-                            onClick={() => setStyle(s)}
+                            key={entry}
+                            onClick={() => setStyle(entry)}
                             className={cn(
-                              'px-3 py-2 rounded-lg border text-left transition-colors text-sm',
-                              style === s
+                              'rounded-lg border px-3 py-2 text-left text-sm transition-colors',
+                              style === entry
                                 ? 'border-accent bg-accent/10 text-foreground'
-                                : 'border-border bg-card text-muted-foreground hover:border-accent/50'
+                                : 'border-border bg-card text-muted-foreground hover:border-accent/50',
                             )}
                           >
-                            <div className="font-medium capitalize">{s}</div>
-                            <div className="text-xs opacity-70">{styleDescriptions[s]}</div>
+                            <div className="font-medium capitalize">{entry}</div>
+                            <div className="text-xs opacity-70">{styleDescriptions[entry]}</div>
                           </button>
                         ))}
                       </div>
                     </div>
                   </div>
 
-                  {/* Key Points */}
                   <div>
                     <Label htmlFor="keyPoints" className="text-sm font-medium">
                       Key Points to Cover (Optional)
                     </Label>
-                    <p className="text-xs text-muted-foreground mt-1 mb-2">
-                      List main topics or sections, one per line
+                    <p className="mb-2 mt-1 text-xs text-muted-foreground">
+                      List the main topics, examples, or beats the script should cover.
                     </p>
                     <Textarea
                       id="keyPoints"
                       value={keyPoints}
-                      onChange={(e) => setKeyPoints(e.target.value)}
-                      placeholder="- Introduction to YouTube basics&#10;- Setting up your channel&#10;- Creating your first video&#10;- Growing your audience"
-                      className="h-32 text-sm font-mono"
+                      onChange={(event) => setKeyPoints(event.target.value)}
+                      placeholder="Example:
+- Start with a compelling hook
+- Explain the setup process
+- Cover common mistakes
+- End with a strong CTA"
+                      className="min-h-[120px] text-sm"
                     />
                   </div>
 
@@ -320,7 +323,7 @@ Generate the complete script now:`
                     ) : (
                       <>
                         <Sparkles className="h-4 w-4" />
-                        Generate Video Script
+                        Generate Script
                       </>
                     )}
                   </Button>
@@ -328,44 +331,103 @@ Generate the complete script now:`
               </Card>
             </TabsContent>
 
-            {/* Output Tab */}
             <TabsContent value="output" className="space-y-6">
-              {generatedScript && (
+              {!generatedScript ? (
+                <Card className="p-8 text-center text-sm text-muted-foreground">
+                  Generate a script to review structured sections here.
+                </Card>
+              ) : (
                 <>
-                  {/* Full Script Actions */}
-                  <div className="flex justify-end">
-                    <Button onClick={handleCopyFullScript} variant="default" className="gap-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-xl font-semibold text-foreground">Generated Script</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Review each section or copy the full script.
+                      </p>
+                    </div>
+                    <Button onClick={handleCopyFullScript} className="gap-2">
                       <Copy className="h-4 w-4" />
                       Copy Full Script
                     </Button>
                   </div>
 
-                  {/* Intro Section */}
-                  <ScriptSectionCard
-                    section={generatedScript.intro}
-                    icon={<Film className="h-5 w-5 text-green-500" />}
-                    onCopy={() => handleCopySection('Intro', generatedScript.intro.content)}
-                    isCopied={copiedSection === 'Intro'}
-                  />
+                  <Card className="overflow-hidden">
+                    <ScrollArea className="h-[70vh]">
+                      <div className="space-y-6 p-6">
+                        {[generatedScript.intro, ...generatedScript.mainContent, generatedScript.outro].map((section) => (
+                          <div key={`${section.title}-${section.timing}`} className="rounded-xl border border-border/70 p-5">
+                            <div className="mb-4 flex items-start justify-between gap-4">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <Film className="h-4 w-4 text-accent" />
+                                  <h3 className="text-lg font-semibold text-foreground">{section.title}</h3>
+                                </div>
+                                <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                                  <Clock className="h-3.5 w-3.5" />
+                                  {section.timing}
+                                </div>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="gap-2"
+                                onClick={() => handleCopySection(section.title, section.content)}
+                              >
+                                {copiedSection === section.title ? (
+                                  <>
+                                    <Check className="h-4 w-4" />
+                                    Copied
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="h-4 w-4" />
+                                    Copy
+                                  </>
+                                )}
+                              </Button>
+                            </div>
 
-                  {/* Main Content Sections */}
-                  {generatedScript.mainContent.map((section, idx) => (
-                    <ScriptSectionCard
-                      key={idx}
-                      section={section}
-                      icon={<FileText className="h-5 w-5 text-blue-500" />}
-                      onCopy={() => handleCopySection(section.title, section.content)}
-                      isCopied={copiedSection === section.title}
-                    />
-                  ))}
+                            <div className="space-y-4">
+                              <div>
+                                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                                  Script
+                                </p>
+                                <div className="whitespace-pre-wrap rounded-lg bg-muted/35 p-4 text-sm leading-7 text-foreground">
+                                  {section.content}
+                                </div>
+                              </div>
 
-                  {/* Outro Section */}
-                  <ScriptSectionCard
-                    section={generatedScript.outro}
-                    icon={<Film className="h-5 w-5 text-purple-500" />}
-                    onCopy={() => handleCopySection('Outro', generatedScript.outro.content)}
-                    isCopied={copiedSection === 'Outro'}
-                  />
+                              {section.brollSuggestions.length > 0 ? (
+                                <div>
+                                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                                    B-Roll Suggestions
+                                  </p>
+                                  <ul className="space-y-1 text-sm text-foreground">
+                                    {section.brollSuggestions.map((suggestion) => (
+                                      <li key={suggestion} className="rounded-lg bg-muted/20 px-3 py-2">
+                                        {suggestion}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+
+                              {section.transitions ? (
+                                <div>
+                                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                                    Transition
+                                  </p>
+                                  <p className="rounded-lg bg-muted/20 px-3 py-2 text-sm text-foreground">
+                                    {section.transitions}
+                                  </p>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  </Card>
                 </>
               )}
             </TabsContent>
@@ -373,72 +435,5 @@ Generate the complete script now:`
         </ToolContainer>
       </ToolBody>
     </ToolShell>
-  )
-}
-
-function ScriptSectionCard({
-  section,
-  icon,
-  onCopy,
-  isCopied,
-}: {
-  section: ScriptSection
-  icon: React.ReactNode
-  onCopy: () => void
-  isCopied: boolean
-}) {
-  return (
-    <Card className="p-6">
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center gap-3">
-          {icon}
-          <div>
-            <h3 className="text-lg font-semibold text-foreground">{section.title}</h3>
-            <div className="flex items-center gap-2 mt-1">
-              <Clock className="h-3 w-3 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">{section.timing}</span>
-            </div>
-          </div>
-        </div>
-        <Button variant="ghost" size="sm" onClick={onCopy} className="gap-2">
-          {isCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-          {isCopied ? 'Copied' : 'Copy'}
-        </Button>
-      </div>
-
-      {/* Script Content */}
-      <div className="mb-4 p-4 bg-muted/50 rounded-lg">
-        <ScrollArea className="max-h-[300px]">
-          <pre className="text-sm text-foreground whitespace-pre-wrap font-sans">
-            {section.content}
-          </pre>
-        </ScrollArea>
-      </div>
-
-      {/* B-roll Suggestions */}
-      {section.brollSuggestions.length > 0 && (
-        <div className="mb-3">
-          <p className="text-xs font-medium text-muted-foreground mb-2">B-Roll Suggestions:</p>
-          <div className="flex flex-wrap gap-2">
-            {section.brollSuggestions.map((suggestion, idx) => (
-              <span
-                key={idx}
-                className="px-2 py-1 rounded text-xs bg-blue-500/10 text-blue-500 border border-blue-500/20"
-              >
-                {suggestion}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Transitions */}
-      {section.transitions && (
-        <div>
-          <p className="text-xs font-medium text-muted-foreground mb-1">Transition:</p>
-          <p className="text-sm text-foreground italic">{section.transitions}</p>
-        </div>
-      )}
-    </Card>
   )
 }

@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
@@ -6,26 +5,29 @@ import { Label } from '@/components/ui/label'
 import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Loader2, Target, Lightbulb, TrendingUp } from 'lucide-react'
+import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { requestChatText } from '@/utils/apiClient'
+import { usePackagingSessionStore } from '@/stores/packagingSessionStore'
 import { toast } from 'sonner'
 
 interface CompetitorAnalysisViewProps {
   onSendToChat?: (prompt: string) => void
 }
 
-interface AnalysisResult {
-  analysis: string
-  timestamp: number
-}
-
 export default function CompetitorAnalysisView({ onSendToChat }: CompetitorAnalysisViewProps) {
-  const [competitorTitle, setCompetitorTitle] = useState('')
-  const [competitorDescription, setCompetitorDescription] = useState('')
-  const [yourTopic, setYourTopic] = useState('')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
+  const {
+    competitorTitle,
+    competitorDescription,
+    yourTopic,
+    analysisResult,
+    setCompetitorTitle,
+    setCompetitorDescription,
+    setYourTopic,
+    setAnalysisResult,
+  } = usePackagingSessionStore()
 
   const handleAnalyze = async () => {
     if (!competitorTitle.trim() || !yourTopic.trim()) {
@@ -40,14 +42,17 @@ export default function CompetitorAnalysisView({ onSendToChat }: CompetitorAnaly
       const prompt = buildAnalysisPrompt(competitorTitle, competitorDescription, yourTopic)
 
       setAnalysisResult({
-        analysis: (await requestChatText({
-          provider: 'openai',
-          model: 'gpt-4o',
-          messages: [{
-            role: 'user',
-            content: [{ type: 'text', text: prompt }],
-          }],
-        })).text,
+        analysis:
+          (await requestChatText({
+            provider: 'openai',
+            model: 'gpt-4o',
+            messages: [
+              {
+                role: 'user',
+                content: [{ type: 'text', text: prompt }],
+              },
+            ],
+          })).text,
         timestamp: Date.now(),
       })
 
@@ -107,11 +112,10 @@ Be specific, actionable, and strategic. Focus on creating a video that complemen
 
   const handleSendToAI = () => {
     if (!analysisResult) return
-    if (onSendToChat) {
-      const chatPrompt = `Based on this competitor analysis:\n\n${analysisResult.analysis}\n\nHelp me refine my video strategy and create compelling titles and descriptions.`
-      onSendToChat(chatPrompt)
-      toast.success('Sent to AI Chat')
-    }
+    onSendToChat?.(
+      `Based on this competitor analysis:\n\n${analysisResult.analysis}\n\nHelp me refine my video strategy and create compelling titles and descriptions.`,
+    )
+    toast.success('Sent to AI Chat')
   }
 
   const handleClear = () => {
@@ -123,50 +127,43 @@ Be specific, actionable, and strategic. Focus on creating a video that complemen
 
   return (
     <div className="flex h-full">
-      {/* Input Section */}
-      <div className="w-[26rem] space-y-6 border-r border-border/70 bg-card/40 p-6">
+      <div className="w-[24rem] space-y-5 border-r border-border/70 bg-card/30 px-5 py-5">
         <div>
-          <h2 className="mb-2 text-2xl font-semibold tracking-tight">Competitor Analysis</h2>
+          <h2 className="mb-2 text-lg font-semibold tracking-tight">Competitor Analysis</h2>
           <p className="text-sm text-muted-foreground">
-            Analyze competitor videos to find unique angles and differentiation opportunities
+            Analyze competitor videos to find unique angles and differentiation opportunities.
           </p>
         </div>
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="competitor-title">
-              Competitor Video Title *
-            </Label>
+            <Label htmlFor="competitor-title">Competitor Video Title *</Label>
             <Input
               id="competitor-title"
               value={competitorTitle}
-              onChange={(e) => setCompetitorTitle(e.target.value)}
+              onChange={(event) => setCompetitorTitle(event.target.value)}
               placeholder="Enter their video title..."
               className="text-sm"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="competitor-desc">
-              Competitor Description (Optional)
-            </Label>
+            <Label htmlFor="competitor-desc">Competitor Description (Optional)</Label>
             <Textarea
               id="competitor-desc"
               value={competitorDescription}
-              onChange={(e) => setCompetitorDescription(e.target.value)}
+              onChange={(event) => setCompetitorDescription(event.target.value)}
               placeholder="Paste their video description if available..."
               className="min-h-[100px] text-sm"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="your-topic">
-              Your Video Topic *
-            </Label>
+            <Label htmlFor="your-topic">Your Video Topic *</Label>
             <Textarea
               id="your-topic"
               value={yourTopic}
-              onChange={(e) => setYourTopic(e.target.value)}
+              onChange={(event) => setYourTopic(event.target.value)}
               placeholder="Describe what you want to cover..."
               className="min-h-[80px] text-sm"
             />
@@ -178,15 +175,10 @@ Be specific, actionable, and strategic. Focus on creating a video that complemen
               disabled={isAnalyzing || !competitorTitle.trim() || !yourTopic.trim()}
               className="h-10 flex-1"
             >
-              {isAnalyzing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {isAnalyzing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {isAnalyzing ? 'Analyzing...' : 'Analyze Competitor'}
             </Button>
-            <Button
-              variant="outline"
-              onClick={handleClear}
-              disabled={isAnalyzing}
-              className="h-10"
-            >
+            <Button variant="outline" onClick={handleClear} disabled={isAnalyzing} className="h-10">
               Clear
             </Button>
           </div>
@@ -194,22 +186,20 @@ Be specific, actionable, and strategic. Focus on creating a video that complemen
 
         <Card className="bg-muted/40 p-4">
           <div className="flex items-start gap-2">
-            <Lightbulb className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+            <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-yellow-500" />
             <div className="text-xs text-muted-foreground">
-              <p className="font-medium text-foreground mb-1">Tips:</p>
-              <ul className="space-y-1 list-disc list-inside">
-                <li>Include competitor's full title for best results</li>
-                <li>Add their description for deeper analysis</li>
-                <li>Be specific about your intended topic</li>
-                <li>Use this to find unique angles, not to copy</li>
+              <p className="mb-1 font-medium text-foreground">Tips:</p>
+              <ul className="list-inside list-disc space-y-1">
+                <li>Include the competitor title for better signal.</li>
+                <li>Add the description when you want sharper differentiation advice.</li>
+                <li>Use this to find unique angles, not to copy.</li>
               </ul>
             </div>
           </div>
         </Card>
       </div>
 
-      {/* Results Section */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex flex-1 flex-col">
         {analysisResult ? (
           <>
             <div className="flex items-center justify-between border-b border-border/70 bg-background/80 p-4 backdrop-blur-xl">
@@ -217,22 +207,16 @@ Be specific, actionable, and strategic. Focus on creating a video that complemen
                 <Target className="h-5 w-5 text-green-500" />
                 <h3 className="font-semibold">Differentiation Strategy</h3>
               </div>
-              <div className="flex gap-2">
-                {onSendToChat && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={handleSendToAI}
-                  >
-                    <TrendingUp className="h-4 w-4 mr-2" />
-                    Refine in AI Chat
-                  </Button>
-                )}
-              </div>
+              {onSendToChat ? (
+                <Button variant="secondary" size="sm" onClick={handleSendToAI}>
+                  <TrendingUp className="mr-2 h-4 w-4" />
+                  Refine in AI Chat
+                </Button>
+              ) : null}
             </div>
 
-            <ScrollArea className="flex-1 p-6">
-              <div className="prose prose-neutral dark:prose-invert mx-auto max-w-4xl prose-sm">
+            <ScrollArea className="flex-1 px-5 py-5">
+              <div className="prose prose-sm max-w-none prose-neutral dark:prose-invert">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {analysisResult.analysis}
                 </ReactMarkdown>
@@ -240,25 +224,15 @@ Be specific, actionable, and strategic. Focus on creating a video that complemen
             </ScrollArea>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center p-6">
-            <div className="text-center max-w-md">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-muted flex items-center justify-center">
+          <div className="flex flex-1 items-center justify-center p-6">
+            <div className="max-w-md text-center">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
                 <Target className="h-8 w-8 text-muted-foreground" />
               </div>
-              <h3 className="text-lg font-semibold mb-2">Competitor Analysis</h3>
-              <p className="text-sm text-muted-foreground mb-4">
-                Enter a competitor's video details and your topic to get strategic insights on how to differentiate your content.
+              <h3 className="mb-2 text-lg font-semibold">Competitor Analysis</h3>
+              <p className="mb-4 text-sm text-muted-foreground">
+                Enter a competitor's video details and your topic to get strategic differentiation ideas.
               </p>
-              <div className="space-y-2 text-xs text-muted-foreground text-left bg-muted/50 p-4 rounded-lg">
-                <p className="font-medium text-foreground">You'll get:</p>
-                <ul className="space-y-1">
-                  <li>✓ Analysis of their approach and angle</li>
-                  <li>✓ Gaps and missed opportunities</li>
-                  <li>✓ Differentiation recommendations</li>
-                  <li>✓ Alternative title suggestions</li>
-                  <li>✓ Unique positioning ideas</li>
-                </ul>
-              </div>
             </div>
           </div>
         )}

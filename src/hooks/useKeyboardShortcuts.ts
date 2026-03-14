@@ -1,12 +1,16 @@
 import { useEffect } from 'react'
+import type { ToolId } from '@/types/navigation'
 
 export interface KeyboardShortcuts {
   onNewChat?: () => void
-  onToggleSidebar?: () => void
+  onTogglePanel?: () => void
   onFocusInput?: () => void
   onFocusSearch?: () => void
-  onSwitchToPackaging?: () => void
-  onSwitchToChat?: () => void
+  onSelectTool?: (toolId: ToolId) => void
+  toolShortcuts?: Array<{
+    toolId: ToolId
+    shortcut: string
+  }>
 }
 
 /**
@@ -14,17 +18,17 @@ export interface KeyboardShortcuts {
  *
  * Shortcuts:
  * - Cmd/Ctrl+N: New chat
- * - Cmd/Ctrl+B: Toggle sidebar
+ * - Cmd/Ctrl+B: Toggle context panel
  * - /: Focus chat input
- * - Cmd/Ctrl+F: Focus search
- * - Cmd/Ctrl+1: Switch to packaging tool
- * - Cmd/Ctrl+2: Switch to chat tool
+ * - Cmd/Ctrl+K: Focus search
+ * - Cmd/Ctrl+1..5: Switch tools
  */
 export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
       const modKey = isMac ? event.metaKey : event.ctrlKey
+      const key = event.key.toLowerCase()
 
       // Ignore shortcuts when typing in input/textarea (except for /)
       const isInputField =
@@ -33,38 +37,37 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcuts) {
         (event.target as HTMLElement).isContentEditable
 
       // Cmd/Ctrl+N: New chat
-      if (modKey && event.key === 'n' && shortcuts.onNewChat) {
+      if (modKey && key === 'n' && shortcuts.onNewChat) {
         event.preventDefault()
         shortcuts.onNewChat()
         return
       }
 
-      // Cmd/Ctrl+B: Toggle sidebar
-      if (modKey && event.key === 'b' && shortcuts.onToggleSidebar) {
+      // Cmd/Ctrl+B: Toggle context panel
+      if (modKey && key === 'b' && shortcuts.onTogglePanel) {
         event.preventDefault()
-        shortcuts.onToggleSidebar()
+        shortcuts.onTogglePanel()
         return
       }
 
-      // Cmd/Ctrl+F: Focus search
-      if (modKey && event.key === 'f' && shortcuts.onFocusSearch) {
+      // Cmd/Ctrl+K: Focus search
+      if (modKey && (key === 'k' || key === 'f') && shortcuts.onFocusSearch) {
         event.preventDefault()
         shortcuts.onFocusSearch()
         return
       }
 
-      // Cmd/Ctrl+1: Switch to packaging tool
-      if (modKey && event.key === '1' && shortcuts.onSwitchToPackaging) {
-        event.preventDefault()
-        shortcuts.onSwitchToPackaging()
-        return
-      }
+      if (modKey && shortcuts.onSelectTool && shortcuts.toolShortcuts) {
+        const matchedTool = shortcuts.toolShortcuts.find((toolShortcut) => {
+          const normalizedShortcut = toolShortcut.shortcut.toLowerCase()
+          return normalizedShortcut.startsWith('mod+') && normalizedShortcut.slice(4) === key
+        })
 
-      // Cmd/Ctrl+2: Switch to chat tool
-      if (modKey && event.key === '2' && shortcuts.onSwitchToChat) {
-        event.preventDefault()
-        shortcuts.onSwitchToChat()
-        return
+        if (matchedTool) {
+          event.preventDefault()
+          shortcuts.onSelectTool(matchedTool.toolId)
+          return
+        }
       }
 
       // /: Focus input (only when NOT already in an input field)

@@ -182,11 +182,11 @@ export default function TemplateEditor() {
   const sortedSections = [...sections].sort((a, b) => a.order - b.order)
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6 sm:p-8">
+    <div className="space-y-5 px-5 py-5">
       {/* Header with Presets */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h3 className="mb-1 text-2xl font-semibold tracking-tight text-foreground">Template Editor</h3>
+          <h3 className="mb-1 text-lg font-semibold tracking-tight text-foreground">Template Editor</h3>
           <p className="text-sm text-muted-foreground">
             Customize outputs and prompt sections to match your workflow.
           </p>
@@ -199,7 +199,7 @@ export default function TemplateEditor() {
               variant="outline"
               size="sm"
               data-flow-name="btn-presets-menu"
-              className="gap-2 rounded-lg"
+              className="h-8 gap-2 rounded-[0.8rem]"
             >
               <Archive className="size-4" />
               Presets

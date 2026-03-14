@@ -24,6 +24,17 @@ export const getModKey = () => {
  * @param withMod Whether to include the modifier key (Cmd/Ctrl)
  */
 export const formatShortcut = (key: string, withMod: boolean = true) => {
-  if (!withMod) return key
-  return `${getModKey()}+${key}`
+  const normalized = key.toLowerCase()
+
+  if (normalized.startsWith('mod+')) {
+    return `${getModKey()}+${key.slice(4).toUpperCase()}`
+  }
+
+  if (!withMod) return key.toUpperCase()
+
+  if (/^[a-z0-9]$/i.test(key)) {
+    return `${getModKey()}+${key.toUpperCase()}`
+  }
+
+  return key
 }

@@ -8,7 +8,6 @@ import { useIsMobile } from '../hooks/useMediaQuery'
 import ChatMessage from './ChatMessage'
 import ChatInput from './ChatInput'
 import { CanvasPanel } from './CanvasPanel'
-import MobileHeader from '../components/MobileHeader'
 import WelcomeScreen from './WelcomeScreen'
 import SystemPromptDialog from './SystemPromptDialog'
 import PinnedMessagesPanel from './PinnedMessagesPanel'
@@ -17,25 +16,42 @@ import ComparisonModeSelector, { type ComparisonModel } from '../components/Comp
 import TitleVariantsView, { type TitleVariant } from '../components/TitleVariantsView'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { useAppShell } from '@/components/layout/AppShellContext'
+import { cn } from '@/lib/utils'
 import type { ContentPart, Provider } from '../types/chat'
 import { MODELS } from '../types/chat'
-import { ChevronLeft, Pin } from 'lucide-react'
+import { ChevronLeft, Menu, PanelLeft, Pin } from 'lucide-react'
 import { toast } from 'sonner'
 import { extractTitle, generateTitleVariants } from '../utils/titleVariants'
 import { requestChatText, streamChatCompletion, type ChatRequestMessage } from '../utils/apiClient'
+import { showBackgroundTaskCompletionToast } from '../utils/taskCompletionToast'
+
+const AUTO_SCROLL_TOLERANCE_PX = 4
+
+function isNearBottom(element: HTMLDivElement) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= AUTO_SCROLL_TOLERANCE_PX
+}
 
 interface ChatPageProps {
   initialChatId?: string
   promptId?: string
   onPromptProcessed?: () => void
+  onSelectChat?: (chatId: string) => void
   onRegisterFocusInput?: (focusFn: () => void) => void
-  onToggleSidebar?: () => void
 }
 
-export default function ChatPage({ initialChatId, promptId, onPromptProcessed, onRegisterFocusInput, onToggleSidebar }: ChatPageProps) {
+export default function ChatPage({
+  initialChatId,
+  promptId,
+  onPromptProcessed,
+  onSelectChat,
+  onRegisterFocusInput,
+}: ChatPageProps) {
   const isMobile = useIsMobile()
+  const { openMobileNavigation, toggleContextPanel, isContextPanelOpen } = useAppShell()
   const {
     chats,
+    folders,
     activeChat,
     activeChatId,
     setActiveChatId,
@@ -57,7 +73,7 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
   const { addToQueue } = useOfflineQueue()
   const { settings } = useSettingsStore()
 
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesScrollRef = useRef<HTMLDivElement>(null)
   const messageRefsMap = useRef<Map<string, HTMLDivElement>>(new Map())
   const [isStreaming, setIsStreaming] = useState(false)
   const [abortController, setAbortController] = useState<AbortController | null>(null)
@@ -65,6 +81,8 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
   const titleGeneratedRef = useRef<Set<string>>(new Set())
   const isInitialLoadRef = useRef(true)
   const previousChatIdRef = useRef<string | null>(null)
+  const shouldAutoScrollRef = useRef(true)
+  const shouldAutoScrollOnNextRenderRef = useRef(false)
 
   const {
     mode: canvasMode,
@@ -133,6 +151,8 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
   useEffect(() => {
     if (activeChatId !== previousChatIdRef.current) {
       isInitialLoadRef.current = true
+      shouldAutoScrollRef.current = true
+      shouldAutoScrollOnNextRenderRef.current = true
       previousChatIdRef.current = activeChatId
       setCanvasActiveChatId(activeChatId)
       setIsNotesAttached(false)
@@ -141,15 +161,49 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
     }
   }, [activeChatId, setCanvasActiveChatId])
 
-  // Scroll to bottom
-  useEffect(() => {
-    if (activeChat?.messages.length) {
-      messagesEndRef.current?.scrollIntoView({
-        behavior: isInitialLoadRef.current ? 'instant' : 'smooth'
-      })
-      isInitialLoadRef.current = false
+  const requestScrollToBottom = () => {
+    shouldAutoScrollRef.current = true
+    shouldAutoScrollOnNextRenderRef.current = true
+  }
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'auto') => {
+    const container = messagesScrollRef.current
+    if (!container) return
+
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior,
+    })
+    shouldAutoScrollRef.current = true
+  }
+
+  const handleMessagesScroll = () => {
+    const container = messagesScrollRef.current
+    if (!container) return
+
+    const isPinnedToBottom = isNearBottom(container)
+    shouldAutoScrollRef.current = isPinnedToBottom
+
+    if (!isPinnedToBottom) {
+      shouldAutoScrollOnNextRenderRef.current = false
     }
-  }, [activeChat?.messages])
+  }
+
+  // Keep the view pinned to the latest message only while the user is already at the bottom.
+  useEffect(() => {
+    if (!activeChat?.messages.length) return
+
+    const shouldScroll =
+      isInitialLoadRef.current ||
+      shouldAutoScrollRef.current ||
+      shouldAutoScrollOnNextRenderRef.current
+
+    if (!shouldScroll) return
+
+    scrollToBottom(isInitialLoadRef.current || isStreaming ? 'auto' : 'smooth')
+    shouldAutoScrollOnNextRenderRef.current = false
+    isInitialLoadRef.current = false
+  }, [activeChat?.messages, isStreaming])
 
   // Generate AI title
   const getTitleSeedText = (content: ContentPart[]) => {
@@ -214,21 +268,38 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
     })
   }
 
+  const getEffectiveSystemPrompt = (chat: { folderId?: string; systemPrompt?: string }) => {
+    const projectPrompt = chat.folderId
+      ? folders.find((folder) => folder.id === chat.folderId)?.systemPrompt?.trim()
+      : undefined
+    const trimmedChatPrompt = chat.systemPrompt?.trim()
+
+    if (projectPrompt && trimmedChatPrompt) {
+      return `Project context:\n${projectPrompt}\n\nChat-specific instructions:\n${trimmedChatPrompt}`
+    }
+
+    return projectPrompt || trimmedChatPrompt || undefined
+  }
+
   const sendToAI = async (chatId: string) => {
     if (isStreaming) return
 
     const chat = useChatStore.getState().chats.find(c => c.id === chatId)
     if (!chat) return
 
+    requestScrollToBottom()
+
     const messages = toRequestMessages(chat.messages)
+    const systemPrompt = getEffectiveSystemPrompt(chat)
 
     if (!isOnline) {
-      queueChatRequest(chatId, chat.provider, chat.model, messages, chat.systemPrompt)
+      queueChatRequest(chatId, chat.provider, chat.model, messages, systemPrompt)
       return
     }
 
     const isFirstMessage = chat.messages.length === 1 && chat.messages[0]?.role === 'user'
     const latestUserMessage = [...chat.messages].reverse().find((message) => message.role === 'user')
+    const usesWebSearch = isWebSearchEnabled
     setIsStreaming(true)
 
     const controller = new AbortController()
@@ -242,8 +313,8 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
           provider: chat.provider,
           model: chat.model,
           messages,
-          webSearch: isWebSearchEnabled,
-          systemPrompt: chat.systemPrompt,
+          webSearch: usesWebSearch,
+          systemPrompt,
           signal: controller.signal,
         },
         {
@@ -262,6 +333,13 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
           void generateChatTitle(chatId, chat.provider, chat.model, userText)
         }
       }
+
+      const completedChat = useChatStore.getState().chats.find((entry) => entry.id === chatId)
+      showBackgroundTaskCompletionToast({
+        routePrefix: '/chat',
+        title: usesWebSearch ? 'Web search reply ready' : 'Chat reply ready',
+        description: completedChat?.title || chat.model,
+      })
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         appendToMessage(chatId, assistantMessageId, '\n\n[Response stopped by user]')
@@ -274,6 +352,15 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
       setIsStreaming(false)
       setAbortController(null)
     }
+  }
+
+  const activateChat = (chatId: string) => {
+    if (onSelectChat) {
+      onSelectChat(chatId)
+      return
+    }
+
+    setActiveChatId(chatId)
   }
 
   const buildContentWithCanvas = (content: ContentPart[]) => {
@@ -388,6 +475,8 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
     const finalContent = buildContentWithCanvas(content)
     if (finalContent.length === 0) return
 
+    requestScrollToBottom()
+
     // If comparison mode is active, use comparison send
     if (isComparisonMode) {
       await sendToModelsForComparison(finalContent)
@@ -409,7 +498,10 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
     const finalContent = buildContentWithCanvas(content)
     if (finalContent.length === 0) return
 
+    requestScrollToBottom()
+
     const chatId = createChat()
+    activateChat(chatId)
     addMessage(chatId, 'user', finalContent)
     await sendToAI(chatId)
 
@@ -446,6 +538,7 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
     if (!activeChatId) return
 
     // Add the promoted response as an assistant message in the main chat
+    requestScrollToBottom()
     addMessage(activeChatId, 'assistant', [{ type: 'text', text: response }])
 
     // Exit comparison mode
@@ -500,6 +593,7 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
     if (!activeChatId) return
 
     // Add the selected title as a user message to continue the conversation
+    requestScrollToBottom()
     addMessage(activeChatId, 'user', [{ type: 'text', text: `Use this title instead: "${title}"` }])
 
     // Close variants view
@@ -522,6 +616,7 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
   // Handle suggestion prompt from welcome screen
   const handleSuggestion = (prompt: string) => {
     const chatId = createChat(undefined, prompt)
+    activateChat(chatId)
     void sendToAI(chatId)
   }
 
@@ -577,6 +672,7 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
     const forkedChatId = forkChat(activeChatId, messageId, content)
 
     if (forkedChatId) {
+      activateChat(forkedChatId)
       toast.success('Created conversation fork')
       // Send the edited message to get AI response in the forked chat
       void sendToAI(forkedChatId)
@@ -591,11 +687,11 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
   const handleJumpToMessage = (chatId: string, messageId: string) => {
     // Switch to the chat if not already active
     if (chatId !== activeChatId) {
-      setActiveChatId(chatId)
+      activateChat(chatId)
       // Wait for chat to switch and DOM to update
       setTimeout(() => {
         scrollToMessage(messageId)
-      }, 100)
+      }, 150)
     } else {
       scrollToMessage(messageId)
     }
@@ -618,14 +714,38 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
   return (
     <div className="flex h-full bg-background">
       {/* Main Chat Area */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Mobile Header (hamburger menu) */}
-        {isMobile && <MobileHeader onMenuClick={() => onToggleSidebar?.()} />}
-
-        {activeChat ? (
-          <>
-            {/* Header with system prompt and pinned messages buttons */}
-            <div className="flex h-14 items-center justify-end gap-2 border-b border-border/70 bg-background/85 px-4 backdrop-blur-xl">
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        <div className="flex h-14 items-center justify-between gap-3 border-b border-border/70 bg-background/85 px-4 backdrop-blur-xl">
+          <div className="flex min-w-0 items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 rounded-2xl md:hidden"
+              onClick={openMobileNavigation}
+              aria-label="Open navigation menu"
+            >
+              <Menu className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="hidden h-10 w-10 rounded-2xl md:inline-flex"
+              onClick={toggleContextPanel}
+              aria-label={isContextPanelOpen ? 'Hide chat panel' : 'Show chat panel'}
+            >
+              <PanelLeft className={cn('h-4 w-4 transition-transform', isContextPanelOpen && 'rotate-180')} />
+            </Button>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold tracking-tight text-foreground">AI Chat</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {activeChat?.title || 'New chat'}
+              </div>
+            </div>
+          </div>
+          {activeChat ? (
+            <div className="flex items-center gap-2">
               <Button
                 variant="ghost"
                 size="sm"
@@ -648,7 +768,11 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
                 {activeChat.systemPrompt ? 'Custom System Prompt' : 'System Prompt'}
               </Button>
             </div>
+          ) : null}
+        </div>
 
+        {activeChat ? (
+          <>
             {/* Messages, Comparison View, or Title Variants */}
             {showComparisonView ? (
               <ComparisonView
@@ -668,7 +792,11 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
                 </div>
               </div>
             ) : (
-              <div className="flex-1 overflow-y-auto px-4 pb-8 pt-5 sm:px-6">
+              <div
+                ref={messagesScrollRef}
+                onScroll={handleMessagesScroll}
+                className="flex-1 overflow-y-auto px-4 pb-16 pt-5 sm:px-6"
+              >
                 <div className="mx-auto w-full max-w-[48rem] space-y-5">
                   {activeChat.messages.map((message, index) => {
                     const hasSubsequentMessages = index < activeChat.messages.length - 1
@@ -697,7 +825,6 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
                       </div>
                     )
                   })}
-                  <div ref={messagesEndRef} />
                 </div>
               </div>
             )}
@@ -711,8 +838,8 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
             />
 
             {/* Input — floats at bottom */}
-            <div className="w-full px-4 pb-4 sm:px-6">
-              <div className="mx-auto w-full max-w-[48rem]">
+            <div className="relative z-10 -mt-8 w-full px-4 pb-5 sm:px-6">
+              <div className="mx-auto w-full max-w-[49.5rem]">
                 <ChatInput
                   onSend={handleSend}
                   disabled={isStreaming}
@@ -760,8 +887,8 @@ export default function ChatPage({ initialChatId, promptId, onPromptProcessed, o
             <div className="flex flex-1 items-center justify-center px-6 py-10">
               <WelcomeScreen onSuggestion={handleSuggestion} />
             </div>
-            <div className="w-full px-4 pb-4 sm:px-6">
-              <div className="mx-auto w-full max-w-[48rem]">
+            <div className="relative z-10 -mt-8 w-full px-4 pb-5 sm:px-6">
+              <div className="mx-auto w-full max-w-[49.5rem]">
                 <ChatInput
                   onSend={handleWelcomeSend}
                   disabled={isStreaming}

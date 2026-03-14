@@ -1,5 +1,8 @@
-import type { ComponentType, ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { Menu } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { useAppShell } from '@/components/layout/AppShellContext'
 
 interface ToolShellProps {
   className?: string
@@ -9,7 +12,6 @@ interface ToolShellProps {
 interface ToolHeaderProps {
   title: string
   description?: string
-  icon?: ComponentType<{ className?: string }>
   actions?: ReactNode
   className?: string
 }
@@ -31,19 +33,29 @@ export function ToolShell({ className, children }: ToolShellProps) {
 export function ToolHeader({
   title,
   description,
-  icon: Icon,
   actions,
   className,
 }: ToolHeaderProps) {
+  const { openMobileNavigation } = useAppShell()
+
   return (
-    <div className={cn('border-b border-border px-6 py-4', className)}>
-      <div className="mx-auto flex w-full max-w-6xl items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          {Icon ? <Icon className="h-6 w-6 text-accent" /> : null}
-          <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+    <div className={cn('border-b border-border/70 px-5 py-3', className)}>
+      <div className="flex w-full items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 rounded-[0.85rem] md:hidden"
+            onClick={openMobileNavigation}
+            aria-label="Open navigation menu"
+          >
+            <Menu className="h-4 w-4" />
+          </Button>
+          <div className="min-w-0 space-y-0.5">
+            <h1 className="text-[1.35rem] font-semibold tracking-tight text-foreground">{title}</h1>
             {description ? (
-              <p className="text-sm text-muted-foreground">{description}</p>
+              <p className="text-sm leading-5 text-muted-foreground">{description}</p>
             ) : null}
           </div>
         </div>
@@ -54,9 +66,9 @@ export function ToolHeader({
 }
 
 export function ToolBody({ className, children }: ToolBodyProps) {
-  return <div className={cn('flex-1 overflow-y-auto p-6', className)}>{children}</div>
+  return <div className={cn('flex-1 overflow-y-auto p-5', className)}>{children}</div>
 }
 
 export function ToolContainer({ className, children }: ToolContainerProps) {
-  return <div className={cn('mx-auto w-full max-w-6xl space-y-6', className)}>{children}</div>
+  return <div className={cn('mx-auto w-full max-w-[64rem] space-y-6', className)}>{children}</div>
 }

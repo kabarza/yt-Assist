@@ -8,6 +8,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { X, Plus, ArrowLeftRight } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import type { Provider } from '../types/chat'
 import { MODELS } from '../types/chat'
 
@@ -35,7 +36,14 @@ function ModelSelector({
   canRemove: boolean
 }) {
   return (
-    <div className="flex items-center gap-2">
+    <div
+      className={cn(
+        'grid gap-2 sm:items-center',
+        canRemove
+          ? 'sm:grid-cols-[8.5rem_minmax(0,1fr)_2.25rem]'
+          : 'sm:grid-cols-[8.5rem_minmax(0,1fr)]'
+      )}
+    >
       {/* Provider selector */}
       <Select
         value={value.provider}
@@ -46,7 +54,7 @@ function ModelSelector({
           })
         }}
       >
-        <SelectTrigger className="w-[120px] h-8 text-xs">
+        <SelectTrigger className="h-9 w-full rounded-[0.85rem] text-sm">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -60,7 +68,7 @@ function ModelSelector({
         value={value.model}
         onValueChange={(model) => onChange({ ...value, model })}
       >
-        <SelectTrigger className="w-[180px] h-8 text-xs">
+        <SelectTrigger className="h-9 w-full rounded-[0.85rem] text-sm">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -78,7 +86,7 @@ function ModelSelector({
           variant="ghost"
           size="icon"
           onClick={onRemove}
-          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+          className="h-9 w-9 rounded-[0.85rem] text-muted-foreground hover:text-foreground"
           title="Remove model"
         >
           <X className="h-4 w-4" />
@@ -120,31 +128,31 @@ export default function ComparisonModeSelector({
   if (!isActive) return null
 
   return (
-    <Card className="mx-4 mb-3 p-3 bg-accent/10 border-accent">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <ArrowLeftRight className="h-4 w-4 text-accent" />
-          <span className="text-sm font-medium text-foreground">
-            Comparison Mode
-          </span>
+    <div className="relative z-20 w-full px-4 pb-3 sm:px-6">
+      <Card className="mx-auto w-full max-w-[38rem] rounded-[1.45rem] border-border/70 bg-background/96 p-4 shadow-[0_12px_30px_hsl(var(--background)/0.32)] backdrop-blur-sm">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium text-foreground">
+                Comparison Mode
+              </span>
+            </div>
+            <p className="text-xs leading-5 text-muted-foreground">
+              Select 2-4 models to compare responses side-by-side.
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClose}
+            className="h-8 rounded-[0.85rem] px-2.5 text-xs"
+          >
+            Exit
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onClose}
-          className="h-7 px-2 text-xs"
-        >
-          Exit
-        </Button>
-      </div>
 
-      <div className="space-y-2">
-        <p className="text-xs text-muted-foreground mb-2">
-          Select 2-4 models to compare responses side-by-side
-        </p>
-
-        {/* Model selectors */}
-        <div className="space-y-2">
+        <div className="space-y-2.5">
           {selectedModels.map((model, index) => (
             <ModelSelector
               key={index}
@@ -154,21 +162,20 @@ export default function ComparisonModeSelector({
               canRemove={selectedModels.length > 2}
             />
           ))}
-        </div>
 
-        {/* Add model button */}
-        {canAddMore && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleAddModel}
-            className="w-full h-8 text-xs gap-1"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add Model
-          </Button>
-        )}
-      </div>
-    </Card>
+          {canAddMore && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleAddModel}
+              className="h-9 w-full justify-start gap-1.5 rounded-[0.85rem] px-3 text-sm"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add model
+            </Button>
+          )}
+        </div>
+      </Card>
+    </div>
   )
 }

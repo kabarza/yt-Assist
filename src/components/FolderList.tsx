@@ -1,310 +1,379 @@
-import { useState } from 'react'
-import { Folder as FolderIcon, ChevronRight, ChevronDown, Plus, Edit2, Trash2, GripVertical } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { cn } from '@/lib/utils'
-import type { Chat, Folder } from '../types/chat'
-import ConfirmDialog from './ConfirmDialog'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Check, ChevronDown, ChevronRight, Folder as FolderIcon, MoreHorizontal, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
+import {
+  SIDEBAR_ACTION_BUTTON_CLASS,
+  SIDEBAR_COUNT_CLASS,
+  SIDEBAR_FOLDER_BRANCH_CLASS,
+  SIDEBAR_FOLDER_ROW_CLASS,
+  SIDEBAR_FOLDER_TOGGLE_CLASS,
+  SIDEBAR_SECTION_ROW_CLASS,
+} from '@/components/navigation/sidebarLayout'
+import type { Chat, Folder } from '../types/chat'
 
 interface FolderListProps {
   folders: Folder[]
   chats: Chat[]
-  onCreateFolder: (name: string) => void
-  onRenameFolder: (id: string, name: string) => void
+  activeChatId?: string | null
+  onRenameFolder: (id: string, name: string, systemPrompt?: string) => void
   onDeleteFolder: (id: string) => void
-  onMoveToFolder: (chatId: string, folderId: string | null) => void
-  renderChatItem: (chat: Chat) => React.ReactNode
+  mode?: 'desktop' | 'mobile'
+  renderChatItem: (chat: Chat) => ReactNode
+}
+
+interface SectionLabelProps {
+  label: string
+  tooltip: string
+  count: number
+}
+
+function SectionLabel({ label, tooltip, count }: SectionLabelProps) {
+  return (
+    <div className={SIDEBAR_SECTION_ROW_CLASS}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            {label}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-56">
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+
+      <span aria-hidden="true" className="h-[1.625rem] w-[1.625rem]" />
+      <span aria-hidden="true" className="h-[1.625rem] w-[1.625rem]" />
+      <span className={SIDEBAR_COUNT_CLASS}>{count}</span>
+    </div>
+  )
 }
 
 export default function FolderList({
   folders,
   chats,
-  onCreateFolder,
+  activeChatId,
   onRenameFolder,
   onDeleteFolder,
-  onMoveToFolder,
+  mode = 'desktop',
   renderChatItem,
 }: FolderListProps) {
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['all']))
-  const [showNewFolderInput, setShowNewFolderInput] = useState(false)
-  const [newFolderName, setNewFolderName] = useState('')
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
-  const [deleteFolderId, setDeleteFolderId] = useState<string | null>(null)
-  const [draggedChatId, setDraggedChatId] = useState<string | null>(null)
+  const [editingSystemPrompt, setEditingSystemPrompt] = useState('')
+  const [editingFolderMode, setEditingFolderMode] = useState<'rename' | 'settings' | null>(null)
+
+  useEffect(() => {
+    const activeChat = activeChatId ? chats.find((chat) => chat.id === activeChatId) : null
+
+    if (!activeChat?.folderId) return
+
+    setExpandedFolders((previous) => {
+      if (previous.has(activeChat.folderId!)) return previous
+      const next = new Set(previous)
+      next.add(activeChat.folderId!)
+      return next
+    })
+  }, [activeChatId, chats])
 
   const toggleFolder = (folderId: string) => {
-    setExpandedFolders(prev => {
-      const next = new Set(prev)
+    setExpandedFolders((previous) => {
+      const next = new Set(previous)
+
       if (next.has(folderId)) {
         next.delete(folderId)
       } else {
         next.add(folderId)
       }
+
       return next
     })
   }
 
-  const handleCreateFolder = () => {
-    if (!newFolderName.trim()) return
-    onCreateFolder(newFolderName.trim())
-    setNewFolderName('')
-    setShowNewFolderInput(false)
-    toast.success('Folder created')
+  const resetEditingState = () => {
+    setEditingFolderId(null)
+    setEditingName('')
+    setEditingSystemPrompt('')
+    setEditingFolderMode(null)
+  }
+
+  const startEditingFolder = (folder: Folder, mode: 'rename' | 'settings') => {
+    setEditingFolderId(folder.id)
+    setEditingName(folder.name)
+    setEditingSystemPrompt(folder.systemPrompt || '')
+    setEditingFolderMode(mode)
+    setExpandedFolders((previous) => {
+      const next = new Set(previous)
+      next.add(folder.id)
+      return next
+    })
   }
 
   const handleRenameFolder = (id: string) => {
-    if (!editingName.trim()) return
-    onRenameFolder(id, editingName.trim())
-    setEditingFolderId(null)
-    setEditingName('')
-    toast.success('Folder renamed')
+    const trimmedName = editingName.trim()
+
+    if (!trimmedName) return
+
+    onRenameFolder(id, trimmedName, editingSystemPrompt.trim() || undefined)
+    resetEditingState()
+    toast.success('Project updated')
   }
 
-  const handleDeleteFolder = () => {
-    if (!deleteFolderId) return
-    onDeleteFolder(deleteFolderId)
-    setDeleteFolderId(null)
-    toast.success('Folder deleted')
+  const handleDeleteFolder = (folderId: string) => {
+    onDeleteFolder(folderId)
+    toast.success('Project deleted')
   }
 
-  const handleDragStart = (chatId: string) => {
-    setDraggedChatId(chatId)
-  }
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault()
-  }
-
-  const handleDrop = (folderId: string | null) => {
-    if (!draggedChatId) return
-    onMoveToFolder(draggedChatId, folderId)
-    setDraggedChatId(null)
-    toast.success(folderId ? 'Moved to folder' : 'Moved to All Chats')
-  }
-
-  // Get chats without folder (All Chats)
-  const unorganizedChats = chats.filter(c => !c.folderId)
-
-  // Get sorted folders
+  const unorganizedChats = chats.filter((chat) => !chat.folderId)
   const sortedFolders = [...folders].sort((a, b) => a.order - b.order)
+  const showActions = mode === 'mobile'
+  const actionVisibilityClass = showActions
+    ? 'opacity-100'
+    : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
 
   return (
-    <div className="space-y-2">
-      {/* New Folder Button */}
-      <div className="px-1.5 pb-1">
-        {showNewFolderInput ? (
-          <div className="flex gap-2">
-            <Input
-              type="text"
-              value={newFolderName}
-              onChange={(e) => setNewFolderName(e.target.value)}
-              placeholder="Folder name..."
-              className="h-9 rounded-xl text-sm"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreateFolder()
-                if (e.key === 'Escape') {
-                  setShowNewFolderInput(false)
-                  setNewFolderName('')
-                }
-              }}
-              autoFocus
-            />
-            <Button
-              size="sm"
-              onClick={handleCreateFolder}
-              disabled={!newFolderName.trim()}
-              className="h-9 rounded-xl px-3"
-            >
-              Add
-            </Button>
-          </div>
+    <div className="min-w-0 space-y-5 overflow-hidden">
+      <section className="space-y-2">
+        <SectionLabel
+          label="Chats"
+          tooltip="Standalone conversations."
+          count={unorganizedChats.length}
+        />
+
+        {unorganizedChats.length === 0 ? (
+          <p className="px-2 py-2 text-sm text-muted-foreground">
+            No chats yet.
+          </p>
         ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowNewFolderInput(true)}
-            className="h-9 w-full justify-start rounded-xl px-3 text-sm font-medium"
-          >
-            <Plus className="h-3 w-3 mr-1.5" />
-            New Folder
-          </Button>
-        )}
-      </div>
-
-      {/* All Chats (unorganized) */}
-      <div>
-        <button
-          type="button"
-          onClick={() => toggleFolder('all')}
-          onDragOver={handleDragOver}
-          onDrop={() => handleDrop(null)}
-          className={cn(
-            "flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-medium transition-colors",
-            "text-foreground/75 hover:bg-muted/50 hover:text-foreground"
-          )}
-        >
-          {expandedFolders.has('all') ? (
-            <ChevronDown className="h-3 w-3 shrink-0" />
-          ) : (
-            <ChevronRight className="h-3 w-3 shrink-0" />
-          )}
-          <FolderIcon className="h-3 w-3 shrink-0" />
-          <span className="flex-1 text-left">All Chats</span>
-          <span className="text-[12px] text-muted-foreground">({unorganizedChats.length})</span>
-        </button>
-
-        {expandedFolders.has('all') && (
-          <div className="ml-2 mt-1 space-y-1">
-            {unorganizedChats.length === 0 ? (
-              <p className="px-3 py-2.5 text-xs text-muted-foreground">
-                No chats
-              </p>
-            ) : (
-              unorganizedChats.map(chat => (
-                <div
-                  key={chat.id}
-                  draggable
-                  onDragStart={() => handleDragStart(chat.id)}
-                  className={cn(
-                    "cursor-move",
-                    draggedChatId === chat.id && "opacity-50"
-                  )}
-                >
-                  {renderChatItem(chat)}
-                </div>
-              ))
-            )}
+          <div className="space-y-0.5 overflow-hidden px-0.5">
+            {unorganizedChats.map((chat) => (
+              <div key={chat.id}>
+                {renderChatItem(chat)}
+              </div>
+            ))}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* User Folders */}
-      {sortedFolders.map(folder => {
-        const folderChats = chats.filter(c => c.folderId === folder.id)
-        const isExpanded = expandedFolders.has(folder.id)
-        const isEditing = editingFolderId === folder.id
+      <section className="space-y-2">
+        <SectionLabel
+          label="Projects"
+          tooltip="Grouped chats with shared context and a project-wide prompt."
+          count={sortedFolders.length}
+        />
 
-        return (
-          <div key={folder.id}>
-            <div className="group relative">
-              {isEditing ? (
-                <div className="flex gap-2 px-1.5">
-                  <Input
-                    type="text"
-                    value={editingName}
-                    onChange={(e) => setEditingName(e.target.value)}
-                    className="h-9 rounded-xl text-sm"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleRenameFolder(folder.id)
-                      if (e.key === 'Escape') {
-                        setEditingFolderId(null)
-                        setEditingName('')
-                      }
-                    }}
-                    autoFocus
-                  />
-                  <Button
-                    size="sm"
-                    onClick={() => handleRenameFolder(folder.id)}
-                    disabled={!editingName.trim()}
-                    className="h-9 rounded-xl px-3"
-                  >
-                    Save
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => toggleFolder(folder.id)}
-                    onDragOver={handleDragOver}
-                    onDrop={() => handleDrop(folder.id)}
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-medium transition-colors",
-                      "text-foreground/75 hover:bg-muted/50 hover:text-foreground"
-                    )}
-                  >
-                    <GripVertical className="h-3 w-3 shrink-0 text-muted-foreground/70 opacity-0 group-hover:opacity-100" />
-                    {isExpanded ? (
-                      <ChevronDown className="h-3 w-3 shrink-0" />
-                    ) : (
-                      <ChevronRight className="h-3 w-3 shrink-0" />
-                    )}
-                    <FolderIcon className="h-3 w-3 shrink-0" />
-                    <span className="flex-1 text-left truncate">{folder.name}</span>
-                    <span className="text-[12px] text-muted-foreground">({folderChats.length})</span>
-                  </button>
+        {sortedFolders.length === 0 ? (
+          <p className="px-2 py-2 text-sm text-muted-foreground">
+            No projects yet.
+          </p>
+        ) : (
+          sortedFolders.map((folder) => {
+            const folderChats = chats.filter((chat) => chat.folderId === folder.id)
+            const isExpanded = expandedFolders.has(folder.id)
+            const isEditing = editingFolderId === folder.id
+            const hasActiveChat = folderChats.some((chat) => chat.id === activeChatId)
 
-                  {/* Folder actions on hover */}
-                  <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setEditingFolderId(folder.id)
-                        setEditingName(folder.name)
-                      }}
-                      className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
-                      aria-label="Rename folder"
-                    >
-                      <Edit2 className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDeleteFolderId(folder.id)
-                      }}
-                      className="rounded-md p-1 text-muted-foreground transition-colors hover:text-destructive"
-                      aria-label="Delete folder"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {isExpanded && !isEditing && (
-              <div className="ml-2 mt-1 space-y-1">
-                {folderChats.length === 0 ? (
-                  <p className="px-3 py-2.5 text-xs text-muted-foreground">
-                    No chats in this folder
-                  </p>
-                ) : (
-                  folderChats.map(chat => (
-                    <div
-                      key={chat.id}
-                      draggable
-                      onDragStart={() => handleDragStart(chat.id)}
-                      className={cn(
-                        "cursor-move",
-                        draggedChatId === chat.id && "opacity-50"
-                      )}
-                    >
-                      {renderChatItem(chat)}
+            return (
+              <div key={folder.id} className="space-y-0.5 overflow-hidden px-0.5">
+                {isEditing ? (
+                  editingFolderMode === 'rename' ? (
+                    <div className="grid grid-cols-[minmax(0,1fr)_1.625rem_1.625rem] items-center gap-x-1 px-1">
+                      <Input
+                        type="text"
+                        value={editingName}
+                        onChange={(event) => setEditingName(event.target.value)}
+                        placeholder="Project name"
+                        className="h-8 rounded-[0.7rem] border-border/55 bg-background/78 text-sm shadow-none"
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') handleRenameFolder(folder.id)
+                          if (event.key === 'Escape') resetEditingState()
+                        }}
+                        autoFocus
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-[1.625rem] w-[1.625rem] rounded-[0.55rem] text-muted-foreground hover:bg-background/72 hover:text-foreground"
+                        onClick={resetEditingState}
+                        aria-label={`Cancel rename for ${folder.name}`}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-[1.625rem] w-[1.625rem] rounded-[0.55rem] text-muted-foreground hover:bg-background/72 hover:text-foreground"
+                        onClick={() => handleRenameFolder(folder.id)}
+                        disabled={!editingName.trim()}
+                        aria-label={`Save rename for ${folder.name}`}
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
-                  ))
+                  ) : (
+                    <div className="ml-2 border-l border-border/45 pl-3 pr-1">
+                      <Input
+                        type="text"
+                        value={editingName}
+                        onChange={(event) => setEditingName(event.target.value)}
+                        placeholder="Project name"
+                        className="h-8 rounded-[0.7rem] border-border/55 bg-background/78 text-sm shadow-none"
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') handleRenameFolder(folder.id)
+                          if (event.key === 'Escape') resetEditingState()
+                        }}
+                        autoFocus
+                      />
+
+                      <Textarea
+                        value={editingSystemPrompt}
+                        onChange={(event) => setEditingSystemPrompt(event.target.value)}
+                        placeholder="Project-wide prompt or shared context"
+                        className="mt-2 min-h-[88px] resize-none rounded-[0.7rem] border-border/55 bg-background/78 text-sm shadow-none"
+                        onKeyDown={(event) => {
+                          if (event.key === 'Escape') resetEditingState()
+                        }}
+                      />
+
+                      <div className="mt-3 flex items-center justify-end gap-2">
+                        <Button variant="ghost" className="h-8 rounded-[0.7rem] px-3" onClick={resetEditingState}>
+                          Cancel
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          className="h-8 rounded-[0.7rem] px-3 shadow-none"
+                          onClick={() => handleRenameFolder(folder.id)}
+                          disabled={!editingName.trim()}
+                        >
+                          Save project
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                ) : (
+                  <>
+                    <div className={SIDEBAR_FOLDER_ROW_CLASS}>
+                      <button
+                        type="button"
+                        onClick={() => toggleFolder(folder.id)}
+                        className={cn(
+                          SIDEBAR_FOLDER_TOGGLE_CLASS,
+                          hasActiveChat
+                            ? 'bg-foreground/[0.06] text-foreground'
+                            : isExpanded
+                              ? 'bg-foreground/[0.03] text-foreground/90'
+                              : 'text-foreground/80 hover:bg-foreground/[0.04]',
+                        )}
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="h-[11px] w-[11px] shrink-0 text-muted-foreground/85" />
+                        ) : (
+                          <ChevronRight className="h-[11px] w-[11px] shrink-0 text-muted-foreground/85" />
+                        )}
+
+                        <FolderIcon className="h-[13px] w-[13px] shrink-0 text-muted-foreground/95" />
+
+                        <div className="min-w-0 flex items-center gap-2">
+                          <span className={cn(
+                            'truncate text-[13px] leading-5',
+                            hasActiveChat ? 'font-semibold text-foreground' : 'font-medium',
+                          )}>
+                            {folder.name}
+                          </span>
+                          {folder.systemPrompt ? (
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/35" />
+                          ) : null}
+                        </div>
+                      </button>
+
+                      <span className={SIDEBAR_COUNT_CLASS}>{folderChats.length}</span>
+
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          SIDEBAR_ACTION_BUTTON_CLASS,
+                          'hover:bg-background/72 hover:text-destructive',
+                          actionVisibilityClass,
+                        )}
+                        onClick={() => handleDeleteFolder(folder.id)}
+                        aria-label={`Delete ${folder.name}`}
+                      >
+                        <Trash2 className="h-[0.8125rem] w-[0.8125rem]" />
+                      </Button>
+
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              SIDEBAR_ACTION_BUTTON_CLASS,
+                              'hover:bg-background/72 hover:text-foreground',
+                              actionVisibilityClass,
+                            )}
+                            aria-label={`Project actions for ${folder.name}`}
+                          >
+                            <MoreHorizontal className="h-3.5 w-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem onClick={() => startEditingFolder(folder, 'rename')}>
+                            Rename project
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => startEditingFolder(folder, 'settings')}>
+                            Project settings
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+
+                    {isExpanded ? (
+                      <div className={SIDEBAR_FOLDER_BRANCH_CLASS}>
+                        {folder.systemPrompt ? (
+                          <div className="mb-1.5 px-1 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/78">
+                            Prompt active for this project
+                          </div>
+                        ) : null}
+
+                        {folderChats.length === 0 ? (
+                          <p className="px-1 py-2 text-sm text-muted-foreground">
+                            No chats in this project yet.
+                          </p>
+                        ) : (
+                          <div className="space-y-0.5 overflow-hidden">
+                            {folderChats.map((chat) => (
+                              <div key={chat.id}>
+                                {renderChatItem(chat)}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                  </>
                 )}
               </div>
-            )}
-          </div>
-        )
-      })}
+            )
+          })
+        )}
+      </section>
 
-      {/* Delete Folder Confirmation */}
-      <ConfirmDialog
-        isOpen={deleteFolderId !== null}
-        title="Delete Folder?"
-        message="This will delete the folder. All chats in this folder will be moved to 'All Chats'. This action cannot be undone."
-        confirmLabel="Delete Folder"
-        cancelLabel="Cancel"
-        variant="danger"
-        onConfirm={handleDeleteFolder}
-        onCancel={() => setDeleteFolderId(null)}
-      />
     </div>
   )
 }

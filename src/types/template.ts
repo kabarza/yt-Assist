@@ -1,3 +1,5 @@
+import type { TranscriptSourceMode } from './transcriptImport'
+
 export interface TemplateSection {
   id: string
   name: string
@@ -31,6 +33,9 @@ export interface Template {
 
 export interface UserInputs {
   transcript: string
+  transcriptSourceMode: TranscriptSourceMode
+  transcriptUrl: string
+  transcriptIncludeTimestamps: boolean
   mustInclude: string
   niceToInclude: string
   avoidWords: string
@@ -43,6 +48,9 @@ export interface UserInputs {
 // Available template variables
 export const TEMPLATE_VARIABLES = [
   { name: 'transcript', description: 'Video transcript' },
+  { name: 'transcriptSourceMode', description: 'Transcript input mode' },
+  { name: 'transcriptUrl', description: 'Video URL used for transcript import' },
+  { name: 'transcriptIncludeTimestamps', description: 'Timestamp import preference' },
   { name: 'mustInclude', description: 'Must-include words' },
   { name: 'niceToInclude', description: 'Nice-to-include words' },
   { name: 'avoidWords', description: 'Words to avoid' },
