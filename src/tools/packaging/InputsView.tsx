@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  Check,
   CheckCircle2,
   ChevronDown,
-  Eye,
+  Copy,
   Link2,
   Loader2,
   MessageSquare,
@@ -11,8 +12,28 @@ import {
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { usePackagingSessionStore } from '@/stores/packagingSessionStore'
 import type { TranscriptImportResponse } from '@/types/transcriptImport'
@@ -43,25 +64,22 @@ function isLikelyYouTubeUrl(value: string) {
 
 function getImportButtonLabel(status: ReturnType<typeof usePackagingSessionStore.getState>['transcriptImport']['status']) {
   if (status === 'loading') {
-    return 'Starting Import'
+    return 'Starting import'
   }
 
   if (status === 'polling') {
-    return 'Generating Transcript'
+    return 'Generating transcript'
   }
 
-  return 'Import Transcript'
+  return 'Import transcript'
 }
 
-const compactFieldClassName = 'rounded-[0.95rem] border-border/60 bg-background/72 shadow-none'
-const utilityToggleBaseClassName =
-  'inline-flex h-9 items-center gap-1.5 rounded-[0.95rem] px-3 text-sm font-medium transition-[background-color,color,box-shadow] duration-150'
-const utilityToggleActiveClassName =
-  'bg-background/88 text-foreground shadow-[0_14px_34px_-22px_hsl(var(--foreground)/0.55),inset_0_0_0_1px_hsl(var(--border)/0.58)]'
-const utilityToggleIdleClassName =
-  'bg-foreground/[0.045] text-muted-foreground shadow-[inset_0_0_0_1px_hsl(var(--border)/0.45)] hover:bg-foreground/[0.07] hover:text-foreground'
-const disclosureRowClassName =
-  'flex w-full items-center justify-between rounded-[0.95rem] px-3 py-2.5 text-left transition-[background-color,color] duration-150 hover:bg-foreground/[0.04]'
+const sectionCardClassName =
+  'rounded-[1.35rem] border-border/70 bg-card/95 shadow-[0_12px_32px_hsl(var(--background)/0.55)]'
+const fieldClassName = 'h-10 rounded-[0.95rem] border-border/60 bg-background/80 shadow-none'
+const textareaFieldClassName = 'rounded-[0.95rem] border-border/60 bg-background/80 shadow-none'
+const disclosureButtonClassName =
+  'flex w-full items-center justify-between gap-4 rounded-[1.1rem] px-5 py-4 text-left transition-colors hover:bg-muted/35'
 
 export default function InputsView({
   userInputs,
@@ -71,22 +89,36 @@ export default function InputsView({
   generatePrompt,
 }: InputsViewProps) {
   const [moreOptionsExpanded, setMoreOptionsExpanded] = useState(false)
-  const [showPreview, setShowPreview] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [copiedPreview, setCopiedPreview] = useState(false)
   const activeImportControllerRef = useRef<AbortController | null>(null)
+  const previewCopyTimeoutRef = useRef<number | null>(null)
   const {
     transcriptImport,
     setTranscriptImport,
   } = usePackagingSessionStore()
 
   const updateField = <K extends keyof UserInputs>(field: K, value: UserInputs[K]) => {
-    setUserInputs(prev => ({ ...prev, [field]: value }))
+    setUserInputs((prev) => ({ ...prev, [field]: value }))
   }
 
   useEffect(() => {
     return () => {
       activeImportControllerRef.current?.abort()
+
+      if (previewCopyTimeoutRef.current) {
+        window.clearTimeout(previewCopyTimeoutRef.current)
+      }
     }
   }, [])
+
+  useEffect(() => {
+    const shouldIncludeName = userInputs.nameForTitles.trim().length > 0
+
+    if (userInputs.includeName !== shouldIncludeName) {
+      updateField('includeName', shouldIncludeName)
+    }
+  }, [userInputs.includeName, userInputs.nameForTitles])
 
   const applyImportedTranscript = (result: TranscriptImportResponse) => {
     if (result.status !== 'completed' || !result.transcriptText) {
@@ -179,355 +211,393 @@ export default function InputsView({
     }
   }
 
-  const wordCount = userInputs.transcript.trim()
-    ? userInputs.transcript.trim().split(/\s+/).length
-    : 0
+  const handleCopyPreview = async () => {
+    try {
+      await navigator.clipboard.writeText(promptPreview)
+      setCopiedPreview(true)
+      toast.success('Prompt copied to clipboard.')
+
+      if (previewCopyTimeoutRef.current) {
+        window.clearTimeout(previewCopyTimeoutRef.current)
+      }
+
+      previewCopyTimeoutRef.current = window.setTimeout(() => {
+        setCopiedPreview(false)
+        previewCopyTimeoutRef.current = null
+      }, 1800)
+    } catch {
+      toast.error('Could not copy the prompt.')
+    }
+  }
 
   const hasTranscript = userInputs.transcript.trim().length > 0
   const isUrlMode = userInputs.transcriptSourceMode === 'url'
   const isImporting = transcriptImport.status === 'loading' || transcriptImport.status === 'polling'
   const canImport = isLikelyYouTubeUrl(userInputs.transcriptUrl) && !isImporting
-  const hasTranscriptStatus =
-    Boolean(transcriptImport.error) ||
-    transcriptImport.status === 'polling' ||
-    Boolean(transcriptImport.metadata)
+  const importMetadata = transcriptImport.metadata
+  const promptPreview = generatePrompt(userInputs)
 
   return (
-    <div className="space-y-7 px-5 py-5">
-      <section className="space-y-4">
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight text-foreground">Transcript</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Bring in the source material first, then shape it however you want.
-            </p>
-          </div>
-          <span className="shrink-0 text-sm text-muted-foreground">{wordCount} words</span>
-        </div>
-
-        <div className="overflow-hidden rounded-[1.35rem] border border-border/70 bg-background/96 shadow-[0_10px_30px_hsl(var(--background)/0.45)] transition-[border-color,box-shadow] duration-200 focus-within:border-ring/40">
-          <div className="space-y-3 px-4 pb-3 pt-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  Source
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  Paste text or import from a YouTube URL into this same transcript field.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => updateField('transcriptSourceMode', 'manual')}
-                  aria-pressed={!isUrlMode}
-                  className={cn(
-                    utilityToggleBaseClassName,
-                    !isUrlMode ? utilityToggleActiveClassName : utilityToggleIdleClassName,
-                  )}
-                >
-                  <Type className="size-4" />
-                  Paste Transcript
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateField('transcriptSourceMode', 'url')}
-                  aria-pressed={isUrlMode}
-                  className={cn(
-                    utilityToggleBaseClassName,
-                    isUrlMode ? utilityToggleActiveClassName : utilityToggleIdleClassName,
-                  )}
-                >
-                  <Link2 className="size-4" />
-                  Import from URL
-                </button>
-              </div>
-            </div>
-
-            {isUrlMode ? (
-              <div className="space-y-3 pt-1">
-                <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
-                  <Input
-                    id="transcript-url"
-                    type="url"
-                    value={userInputs.transcriptUrl}
-                    onChange={(e) => updateField('transcriptUrl', e.target.value)}
-                    placeholder="Paste a YouTube URL"
-                    data-flow-name="input-transcript-url"
-                    className={cn('h-10', compactFieldClassName)}
-                  />
-
-                  <Button
-                    type="button"
-                    onClick={handleImportTranscript}
-                    disabled={!canImport}
-                    data-flow-name="btn-import-transcript"
-                    className="h-10 rounded-[0.95rem] px-4 text-sm font-semibold"
-                  >
-                    {isImporting ? <Loader2 className="size-4 animate-spin" /> : <Link2 className="size-4" />}
-                    {getImportButtonLabel(transcriptImport.status)}
-                  </Button>
-                </div>
-
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <p className="text-xs text-muted-foreground">
-                    Needs a Supadata key in Settings or on the server.
-                  </p>
-                  <label
-                    htmlFor="transcript-include-timestamps"
-                    className="flex items-center gap-3 text-sm text-foreground"
-                  >
-                    <span>Include timestamps</span>
-                    <span className="text-xs text-muted-foreground">
-                      {userInputs.transcriptIncludeTimestamps ? 'On' : 'Off'}
-                    </span>
-                    <Switch
-                      id="transcript-include-timestamps"
-                      checked={userInputs.transcriptIncludeTimestamps}
-                      onCheckedChange={(checked) => updateField('transcriptIncludeTimestamps', checked)}
-                      data-flow-name="switch-transcript-timestamps"
-                    />
-                  </label>
-                </div>
-              </div>
-            ) : null}
-
-            {hasTranscriptStatus ? (
-              <div className="space-y-3 pt-1">
-                {transcriptImport.error ? (
-                  <p className="text-sm text-destructive">{transcriptImport.error}</p>
-                ) : null}
-
-                {transcriptImport.status === 'polling' ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin" />
-                    <span>Generating transcript. Longer videos can take a little more time.</span>
+    <div className="px-5 py-5">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="space-y-6">
+          <Card className={sectionCardClassName}>
+            <CardHeader className="gap-4 pb-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-2xl space-y-1">
+                  <div className="space-y-1">
+                    <CardTitle className="text-lg">Transcript</CardTitle>
+                    <CardDescription>Paste text or import a YouTube transcript, then edit it here.</CardDescription>
                   </div>
-                ) : null}
+                </div>
 
-                {transcriptImport.metadata ? (
-                  <div className="flex flex-col gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline" className="gap-1 rounded-full px-2.5 py-1">
+                <div className="flex flex-col gap-3 lg:min-w-[21rem] lg:items-end">
+                  <Tabs
+                    value={userInputs.transcriptSourceMode}
+                    onValueChange={(value) =>
+                      updateField('transcriptSourceMode', value as UserInputs['transcriptSourceMode'])
+                    }
+                    className="w-full lg:w-auto"
+                  >
+                    <TabsList className="grid w-full grid-cols-2 lg:w-auto">
+                      <TabsTrigger value="manual" className="gap-2">
+                        <Type className="size-4" />
+                        Paste text
+                      </TabsTrigger>
+                      <TabsTrigger value="url" className="gap-2">
+                        <Link2 className="size-4" />
+                        Import URL
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+
+                  {importMetadata ? (
+                    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                      <Badge variant="outline" className="gap-1 rounded-full px-2.5 py-1 text-xs">
                         <CheckCircle2 className="size-3.5" />
                         Imported
                       </Badge>
-                      <Badge variant="outline" className="rounded-full px-2.5 py-1">
-                        {transcriptImport.metadata.wasGenerated ? 'AI Generated' : 'Native Captions'}
+                      <Badge variant="outline" className="rounded-full px-2.5 py-1 text-xs">
+                        {importMetadata.wasGenerated ? 'AI generated' : 'Native captions'}
                       </Badge>
-                      <Badge variant="outline" className="rounded-full px-2.5 py-1 uppercase">
-                        {transcriptImport.metadata.provider}
+                      <Badge variant="outline" className="rounded-full px-2.5 py-1 text-xs uppercase">
+                        {importMetadata.provider}
                       </Badge>
-                      {transcriptImport.metadata.language ? (
-                        <Badge variant="outline" className="rounded-full px-2.5 py-1 uppercase">
-                          {transcriptImport.metadata.language}
+                      {importMetadata.language ? (
+                        <Badge variant="outline" className="rounded-full px-2.5 py-1 text-xs uppercase">
+                          {importMetadata.language}
                         </Badge>
                       ) : null}
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      {transcriptImport.metadata.title?.trim()
-                        ? `Last import: ${transcriptImport.metadata.title}`
-                        : 'Last import completed successfully.'}
+                  ) : null}
+                </div>
+              </div>
+            </CardHeader>
+
+            <CardContent className="space-y-4 p-5">
+              {isUrlMode ? (
+                <div className="space-y-4 rounded-[1.15rem] border border-border/60 bg-muted/20 p-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="transcript-url">Video URL</Label>
+                    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <Input
+                        id="transcript-url"
+                        type="url"
+                        value={userInputs.transcriptUrl}
+                        onChange={(event) => updateField('transcriptUrl', event.target.value)}
+                        placeholder="Paste a YouTube URL"
+                        data-flow-name="input-transcript-url"
+                        className={fieldClassName}
+                      />
+                      <Button
+                        type="button"
+                        onClick={handleImportTranscript}
+                        disabled={!canImport}
+                        data-flow-name="btn-import-transcript"
+                        className="h-10 rounded-[0.95rem] px-4 text-sm font-semibold"
+                      >
+                        {isImporting ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <Link2 className="size-4" />
+                        )}
+                        {getImportButtonLabel(transcriptImport.status)}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3 rounded-[1rem] border border-border/60 bg-background/70 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-muted-foreground">Requires configured Supadata access.</p>
+                    <label
+                      htmlFor="transcript-include-timestamps"
+                      className="flex items-center gap-3 text-sm text-foreground"
+                    >
+                      <span>Include timestamps</span>
+                      <span className="text-xs text-muted-foreground">
+                        {userInputs.transcriptIncludeTimestamps ? 'On' : 'Off'}
+                      </span>
+                      <Switch
+                        id="transcript-include-timestamps"
+                        checked={userInputs.transcriptIncludeTimestamps}
+                        onCheckedChange={(checked) => updateField('transcriptIncludeTimestamps', checked)}
+                        data-flow-name="switch-transcript-timestamps"
+                      />
+                    </label>
+                  </div>
+
+                  {transcriptImport.error ? (
+                    <div className="rounded-[1rem] border border-destructive/25 bg-destructive/10 px-3.5 py-3 text-sm text-destructive">
+                      {transcriptImport.error}
+                    </div>
+                  ) : null}
+
+                  {transcriptImport.status === 'polling' ? (
+                    <div className="flex items-center gap-2 rounded-[1rem] border border-border/60 bg-background/70 px-3.5 py-3 text-sm text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" />
+                      <span>Generating transcript. Longer videos can take a little more time.</span>
+                    </div>
+                  ) : null}
+
+                  {importMetadata?.title ? (
+                    <p className="text-xs text-muted-foreground">Last import: {importMetadata.title}</p>
+                  ) : null}
+                </div>
+              ) : transcriptImport.error ? (
+                <div className="rounded-[1rem] border border-destructive/25 bg-destructive/10 px-3.5 py-3 text-sm text-destructive">
+                  {transcriptImport.error}
+                </div>
+              ) : null}
+
+              <div className="overflow-hidden rounded-[1.15rem] border border-border/60 bg-background">
+                <div className="flex flex-col gap-2 border-b border-border/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">Transcript editor</p>
+                    <p className="text-xs text-muted-foreground">
+                      {isUrlMode ? 'Import lands here. Edit before sending.' : 'Paste the transcript here and shape it before sending.'}
                     </p>
                   </div>
+
+                  {isImporting ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" />
+                      Importing
+                    </div>
+                  ) : null}
+                </div>
+
+                <Textarea
+                  value={userInputs.transcript}
+                  onChange={(event) => updateField('transcript', event.target.value)}
+                  placeholder={
+                    isUrlMode
+                      ? 'Imported transcript will appear here. You can edit it after import.'
+                      : 'Paste your video transcript here...'
+                  }
+                  data-flow-name="input-transcript"
+                  className="min-h-[18rem] resize-none rounded-none border-0 bg-transparent px-4 py-4 font-mono text-sm leading-6 focus-visible:ring-0"
+                />
+              </div>
+
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                  <Dialog
+                    open={previewOpen}
+                    onOpenChange={(open) => {
+                      setPreviewOpen(open)
+
+                      if (!open) {
+                        setCopiedPreview(false)
+                      }
+                    }}
+                  >
+                    <DialogTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="lg"
+                        className="h-11 rounded-[0.95rem] bg-background/70 px-4 text-sm font-semibold"
+                      >
+                        Preview prompt
+                      </Button>
+                    </DialogTrigger>
+
+                    <DialogContent className="max-w-3xl">
+                      <DialogHeader>
+                        <DialogTitle>Prompt preview</DialogTitle>
+                        <DialogDescription>Review the exact prompt before generating or sending it.</DialogDescription>
+                      </DialogHeader>
+
+                      <div className="max-h-[65vh] overflow-auto rounded-[1rem] border border-border/60 bg-muted/20 p-4">
+                        <pre className="whitespace-pre-wrap font-mono text-xs leading-6 text-muted-foreground">
+                          {promptPreview}
+                        </pre>
+                      </div>
+
+                      <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
+                        <Button type="button" variant="outline" onClick={handleCopyPreview}>
+                          {copiedPreview ? <Check className="size-4" /> : <Copy className="size-4" />}
+                          {copiedPreview ? 'Copied' : 'Copy prompt'}
+                        </Button>
+                        <DialogClose asChild>
+                          <Button type="button" variant="ghost">
+                            Close
+                          </Button>
+                        </DialogClose>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+
+                  <Button
+                    onClick={onGenerate}
+                    disabled={!hasTranscript}
+                    data-flow-name="btn-generate"
+                    variant={onSendToAI ? 'outline' : 'default'}
+                    size="lg"
+                    className={cn(
+                      'h-11 rounded-[0.95rem] px-4 text-sm font-semibold',
+                      onSendToAI && 'bg-background/70',
+                    )}
+                  >
+                    Generate prompt
+                  </Button>
+                </div>
+
+                {onSendToAI ? (
+                  <Button
+                    onClick={onSendToAI}
+                    disabled={!hasTranscript}
+                    data-flow-name="btn-send-to-ai"
+                    size="lg"
+                    className="h-11 rounded-[0.95rem] px-5 text-sm font-semibold"
+                  >
+                    <MessageSquare className="size-4" />
+                    Send to AI
+                  </Button>
                 ) : null}
               </div>
-            ) : null}
-          </div>
-
-          <div>
-            <Textarea
-              value={userInputs.transcript}
-              onChange={(e) => updateField('transcript', e.target.value)}
-              placeholder={isUrlMode
-                ? 'Imported transcript will appear here. You can edit it after import.'
-                : 'Paste your video transcript here...'}
-              data-flow-name="input-transcript"
-              className="h-48 resize-none rounded-none border-0 bg-transparent px-4 py-3 font-mono text-sm leading-6 focus-visible:ring-0"
-            />
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <h3 className="text-base font-semibold tracking-tight text-foreground">Core Constraints</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Add the few terms or ideas that the output should orbit around.
-            </p>
-          </div>
+            </CardContent>
+          </Card>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-foreground">
-              Must-Include Words
-            </label>
-            <Input
-              type="text"
-              value={userInputs.mustInclude}
-              onChange={(e) => updateField('mustInclude', e.target.value)}
-              placeholder="e.g., Tutorial, Review"
-              data-flow-name="input-must-include"
-              className={compactFieldClassName}
-            />
-          </div>
+        <div className="space-y-6">
+          <Card className={sectionCardClassName}>
+            <CardHeader className="pb-4">
+              <CardTitle className="text-base">Prompt brief</CardTitle>
+              <CardDescription>Keep only the constraints that matter.</CardDescription>
+            </CardHeader>
 
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-foreground">
-              Nice-To-Include Words
-            </label>
-            <Input
-              type="text"
-              value={userInputs.niceToInclude}
-              onChange={(e) => updateField('niceToInclude', e.target.value)}
-              placeholder="e.g., Brand names, topics"
-              data-flow-name="input-nice-include"
-              className={compactFieldClassName}
-            />
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3 pt-3">
-        <button
-          type="button"
-          onClick={() => setMoreOptionsExpanded(!moreOptionsExpanded)}
-          className={disclosureRowClassName}
-        >
-          <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-            <ChevronDown className={cn(
-              'h-4 w-4 text-muted-foreground transition-transform',
-              moreOptionsExpanded && 'rotate-180'
-            )} />
-            More Options
-          </span>
-        </button>
-
-        {moreOptionsExpanded && (
-          <div className="space-y-5 pt-2">
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <CardContent className="space-y-4">
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-foreground">
-                  Avoid Words/Phrases
-                </label>
+                <Label htmlFor="must-include">Must include</Label>
                 <Input
+                  id="must-include"
                   type="text"
-                  value={userInputs.avoidWords}
-                  onChange={(e) => updateField('avoidWords', e.target.value)}
-                  placeholder="e.g., Clickbait words to avoid"
-                  data-flow-name="input-avoid-words"
-                  className={compactFieldClassName}
+                  value={userInputs.mustInclude}
+                  onChange={(event) => updateField('mustInclude', event.target.value)}
+                  placeholder="Key words or themes"
+                  data-flow-name="input-must-include"
+                  className={fieldClassName}
                 />
               </div>
 
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-foreground">
-                  Hashtag Count
-                </label>
+                <Label htmlFor="nice-to-include">Nice to include</Label>
                 <Input
-                  type="number"
-                  value={userInputs.hashtagCount}
-                  onChange={(e) => updateField('hashtagCount', e.target.value)}
-                  placeholder="5"
-                  min="1"
-                  max="15"
-                  data-flow-name="input-hashtag-count"
-                  className={compactFieldClassName}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <Switch
-                  id="includeName"
-                  checked={userInputs.includeName}
-                  onCheckedChange={(checked) => updateField('includeName', checked)}
-                  data-flow-name="input-include-name"
-                />
-                <label htmlFor="includeName" className="text-sm font-medium text-foreground">
-                  Must include name in titles?
-                </label>
-              </div>
-              {userInputs.includeName && (
-                <Input
+                  id="nice-to-include"
                   type="text"
-                  value={userInputs.nameForTitles}
-                  onChange={(e) => updateField('nameForTitles', e.target.value)}
-                  placeholder="Enter the name to include..."
-                  data-flow-name="input-name-for-titles"
-                  className={compactFieldClassName}
+                  value={userInputs.niceToInclude}
+                  onChange={(event) => updateField('niceToInclude', event.target.value)}
+                  placeholder="Optional angles, brand names, topics"
+                  data-flow-name="input-nice-include"
+                  className={fieldClassName}
                 />
-              )}
-            </div>
+              </div>
 
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-foreground">
-                Additional Context / Notes
-              </label>
-              <Textarea
-                value={userInputs.additionalContext}
-                onChange={(e) => updateField('additionalContext', e.target.value)}
-                placeholder="Any other instructions or context for the AI..."
-                data-flow-name="input-additional-context"
-                className={cn('h-24 resize-none', compactFieldClassName)}
-              />
-            </div>
-          </div>
-        )}
-      </section>
+              <div className="space-y-2">
+                <Label htmlFor="additional-context">Notes</Label>
+                <Textarea
+                  id="additional-context"
+                  value={userInputs.additionalContext}
+                  onChange={(event) => updateField('additionalContext', event.target.value)}
+                  placeholder="Any extra context for the AI..."
+                  data-flow-name="input-additional-context"
+                  className={cn('min-h-[8.5rem] resize-none', textareaFieldClassName)}
+                />
+              </div>
+            </CardContent>
+          </Card>
 
-      <section className="space-y-3 pt-2">
-        <button
-          type="button"
-          onClick={() => setShowPreview(!showPreview)}
-          className={disclosureRowClassName}
-        >
-          <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-            <Eye className="h-4 w-4" />
-            Preview Prompt
-          </span>
-          <ChevronDown className={cn(
-            'h-4 w-4 transition-transform',
-            showPreview && 'rotate-180'
-          )} />
-        </button>
-        {showPreview && (
-          <div className="rounded-[1rem] bg-foreground/[0.035] p-4 shadow-[inset_0_0_0_1px_hsl(var(--border)/0.45)]">
-            <pre className="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs text-muted-foreground">
-              {generatePrompt(userInputs)}
-            </pre>
-          </div>
-        )}
-      </section>
+          <Card className={sectionCardClassName}>
+            <CardContent className="p-0">
+              <button
+                type="button"
+                onClick={() => setMoreOptionsExpanded((current) => !current)}
+                className={disclosureButtonClassName}
+              >
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Advanced options</p>
+                  <p className="text-xs text-muted-foreground">Avoid terms, naming rules, and hashtag count.</p>
+                </div>
+                <ChevronDown
+                  className={cn(
+                    'size-4 shrink-0 text-muted-foreground transition-transform',
+                    moreOptionsExpanded && 'rotate-180',
+                  )}
+                />
+              </button>
 
-      <section className="flex gap-3 pt-3">
-        <Button
-          onClick={onGenerate}
-          disabled={!hasTranscript}
-          data-flow-name="btn-generate"
-          size="lg"
-          className="h-11 flex-1 rounded-[0.95rem] text-sm font-semibold shadow-[0_14px_30px_-24px_hsl(var(--foreground)/0.9)]"
-        >
-          Generate Prompt
-        </Button>
-        {onSendToAI && (
-          <Button
-            onClick={onSendToAI}
-            disabled={!hasTranscript}
-            data-flow-name="btn-send-to-ai"
-            variant="ghost"
-            size="lg"
-            className="h-11 gap-2 rounded-[0.95rem] bg-foreground/[0.045] px-5 text-sm font-semibold text-foreground shadow-[inset_0_0_0_1px_hsl(var(--border)/0.45)] hover:bg-foreground/[0.07]"
-          >
-            <MessageSquare className="h-5 w-5" />
-            Send to AI
-          </Button>
-        )}
-      </section>
+              {moreOptionsExpanded ? (
+                <>
+                  <Separator />
+                  <div className="space-y-4 p-5">
+                    <div className="space-y-2">
+                      <Label htmlFor="avoid-words">Avoid words</Label>
+                      <Input
+                        id="avoid-words"
+                        type="text"
+                        value={userInputs.avoidWords}
+                        onChange={(event) => updateField('avoidWords', event.target.value)}
+                        placeholder="Terms you do not want in the output"
+                        data-flow-name="input-avoid-words"
+                        className={fieldClassName}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="hashtag-count">Hashtag count</Label>
+                      <Input
+                        id="hashtag-count"
+                        type="number"
+                        value={userInputs.hashtagCount}
+                        onChange={(event) => updateField('hashtagCount', event.target.value)}
+                        placeholder="5"
+                        min="1"
+                        max="15"
+                        data-flow-name="input-hashtag-count"
+                        className={fieldClassName}
+                      />
+                    </div>
+
+                    <div className="space-y-2 rounded-[1rem] border border-border/60 bg-muted/20 p-3.5">
+                      <Label htmlFor="name-for-titles">Name to include in titles</Label>
+                      <Input
+                        id="name-for-titles"
+                        type="text"
+                        value={userInputs.nameForTitles}
+                        onChange={(event) => updateField('nameForTitles', event.target.value)}
+                        placeholder="Leave empty if not needed"
+                        data-flow-name="input-name-for-titles"
+                        className={fieldClassName}
+                      />
+                      <p className="text-xs text-muted-foreground">Leave this empty unless the title should anchor to a person or brand.</p>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
   )
 }

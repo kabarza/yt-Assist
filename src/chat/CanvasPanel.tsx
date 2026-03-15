@@ -45,6 +45,8 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
     restoreDrawingFromHistory,
     deleteDrawingHistoryItem,
     clearDrawingHistory,
+    drawingData,
+    setDrawingData,
     setDrawingSnapshot,
     canvasType,
     canvasInstructions,
@@ -648,7 +650,11 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({ width, onWidthChange, 
             <EditorContent editor={editor} className="h-full" />
           </ScrollArea>
         ) : (
-          <DrawingCanvas ref={drawingCanvasRef} />
+          <DrawingCanvas
+            ref={drawingCanvasRef}
+            drawingData={drawingData}
+            onDrawingDataChange={setDrawingData}
+          />
         )}
 
         {/* AI Suggestions Panel (Notes mode only) */}

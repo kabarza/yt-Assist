@@ -70,5 +70,5 @@ export function ToolBody({ className, children }: ToolBodyProps) {
 }
 
 export function ToolContainer({ className, children }: ToolContainerProps) {
-  return <div className={cn('mx-auto w-full max-w-[64rem] space-y-6', className)}>{children}</div>
+  return <div className={cn('mx-auto w-full max-w-[90rem] space-y-6', className)}>{children}</div>
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { generateId } from '../types/chat'
+import type { DrawingData } from '../types/canvas'
 import type {
   ImageAsset,
   ImageAspectRatio,
@@ -34,6 +35,7 @@ interface ImageGenerationStore {
   assetsById: Record<string, ImageAsset>
   pipelines: ImagePipeline[]
   draft: ImageDraft
+  composerDrawingData: DrawingData | null
   gridZoom: ImageGridZoom
   queuePaused: boolean
   hydrate: () => Promise<void>
@@ -42,6 +44,8 @@ interface ImageGenerationStore {
   setDraftCount: (count: number) => Promise<void>
   setDraftAspectRatio: (aspectRatio: ImageAspectRatio) => Promise<void>
   setDraftImageSize: (imageSize: ImageSize) => Promise<void>
+  setComposerDrawingData: (drawingData: DrawingData | null) => Promise<void>
+  clearComposerDrawingData: () => Promise<void>
   resetDraft: () => Promise<void>
   addDraftReference: (input: { blob: Blob; mimeType: string; name?: string }) => Promise<string>
   addDraftReferenceIds: (assetIds: string[]) => Promise<void>
@@ -80,7 +84,7 @@ let hydratePromise: Promise<void> | null = null
 function normalizeStoredAsset(asset: StoredImageAsset): StoredImageAsset {
   return {
     ...asset,
-    isReusable: asset.kind === 'reference' ? Boolean(asset.isReusable) : false,
+    isReusable: Boolean(asset.isReusable),
   }
 }
 
@@ -150,12 +154,13 @@ function buildDraftFromPipeline(pipeline: ImagePipeline): ImageDraft {
 }
 
 function buildSnapshot(
-  state: Pick<ImageGenerationStore, 'turns' | 'draft' | 'gridZoom' | 'queuePaused' | 'pipelines'>
+  state: Pick<ImageGenerationStore, 'turns' | 'draft' | 'composerDrawingData' | 'gridZoom' | 'queuePaused' | 'pipelines'>
 ): ImageThreadSnapshot {
   return {
     version: IMAGE_THREAD_SNAPSHOT_VERSION,
     turns: state.turns,
     draft: state.draft,
+    composerDrawingData: state.composerDrawingData,
     gridZoom: state.gridZoom,
     queuePaused: state.queuePaused,
     pipelines: sortPipelines(state.pipelines),
@@ -210,7 +215,7 @@ function getRetainedAssetIds(
   }
 
   for (const asset of Object.values(assetsById)) {
-    if (asset.kind === 'reference' && asset.isReusable) {
+    if (asset.isReusable) {
       ids.add(asset.id)
     }
   }
@@ -220,13 +225,13 @@ function getRetainedAssetIds(
 
 function sanitizePipelines(
   pipelines: ImagePipeline[] | undefined,
-  availableReferenceAssetIds: Set<string>,
+  availableAssetIds: Set<string>,
 ) {
   return sortPipelines(
     (pipelines ?? []).map((pipeline) => ({
       ...pipeline,
       pinnedAssetIds: uniqueAssetIds(pipeline.pinnedAssetIds ?? []).filter((assetId) =>
-        availableReferenceAssetIds.has(assetId)
+        availableAssetIds.has(assetId)
       ),
     }))
   )
@@ -284,7 +289,7 @@ function sanitizeTurns(turns: ImageTurn[] | undefined, availableAssetIds: Set<st
 }
 
 async function persistSnapshotFromState(
-  state: Pick<ImageGenerationStore, 'turns' | 'draft' | 'gridZoom' | 'queuePaused' | 'pipelines'>
+  state: Pick<ImageGenerationStore, 'turns' | 'draft' | 'composerDrawingData' | 'gridZoom' | 'queuePaused' | 'pipelines'>
 ) {
   await saveImageGenerationSnapshot(buildSnapshot(state))
 }
@@ -320,10 +325,7 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
 
   const promoteReferenceAssetsToReusable = async (assetIds: string[]) => {
     const state = get()
-    const validReferenceIds = uniqueAssetIds(assetIds).filter((assetId) => {
-      const asset = state.assetsById[assetId]
-      return Boolean(asset && asset.kind === 'reference')
-    })
+    const validReferenceIds = uniqueAssetIds(assetIds).filter((assetId) => Boolean(state.assetsById[assetId]))
 
     const updates = validReferenceIds.flatMap((assetId) => {
       const asset = state.assetsById[assetId]
@@ -352,6 +354,7 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
     assetsById: {},
     pipelines: [],
     draft: DEFAULT_IMAGE_DRAFT,
+    composerDrawingData: null,
     gridZoom: 'list',
     queuePaused: false,
 
@@ -371,16 +374,11 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
             })
           )
           const availableAssetIds = new Set(assets.map((asset) => asset.id))
-          const availableReferenceAssetIds = new Set(
-            assets
-              .map(normalizeStoredAsset)
-              .filter((asset) => asset.kind === 'reference')
-              .map((asset) => asset.id)
-          )
-          const pipelines = sanitizePipelines(snapshot?.pipelines, availableReferenceAssetIds)
+          const pipelines = sanitizePipelines(snapshot?.pipelines, availableAssetIds)
           const availablePipelineIds = new Set(pipelines.map((pipeline) => pipeline.id))
           const { normalizedTurns, shouldPauseQueue } = sanitizeTurns(snapshot?.turns, availableAssetIds)
           const draft = sanitizeDraft(snapshot?.draft, availableAssetIds, availablePipelineIds)
+          const composerDrawingData = snapshot?.composerDrawingData ?? null
           const gridZoom = normalizeGridZoom(snapshot?.gridZoom)
           const queuePaused = shouldPauseQueue ? true : (snapshot?.queuePaused ?? false)
 
@@ -391,6 +389,7 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
             assetsById: materializedAssets,
             pipelines,
             draft,
+            composerDrawingData,
             gridZoom,
             queuePaused,
           })
@@ -403,11 +402,13 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
             snapshot.queuePaused !== queuePaused ||
             JSON.stringify(snapshot.turns ?? []) !== JSON.stringify(normalizedTurns) ||
             JSON.stringify(snapshot.draft ?? DEFAULT_IMAGE_DRAFT) !== JSON.stringify(draft) ||
+            JSON.stringify(snapshot.composerDrawingData ?? null) !== JSON.stringify(composerDrawingData) ||
             JSON.stringify(snapshot.pipelines ?? []) !== JSON.stringify(pipelines)
           ) {
             await persistSnapshotFromState({
               turns: normalizedTurns,
               draft,
+              composerDrawingData,
               gridZoom,
               queuePaused,
               pipelines,
@@ -485,6 +486,18 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
       await persistSnapshot()
     },
 
+    setComposerDrawingData: async (composerDrawingData) => {
+      set({ composerDrawingData })
+
+      await persistSnapshot()
+    },
+
+    clearComposerDrawingData: async () => {
+      set({ composerDrawingData: null })
+
+      await persistSnapshot()
+    },
+
     resetDraft: async () => {
       set((state) => ({
         draft: {
@@ -533,10 +546,7 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
 
     addDraftReferenceIds: async (assetIds) => {
       const state = get()
-      const validReferenceIds = uniqueAssetIds(assetIds).filter((assetId) => {
-        const asset = state.assetsById[assetId]
-        return Boolean(asset && asset.kind === 'reference')
-      })
+      const validReferenceIds = uniqueAssetIds(assetIds).filter((assetId) => Boolean(state.assetsById[assetId]))
 
       if (validReferenceIds.length === 0) return
 
@@ -599,7 +609,7 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
 
     deleteReusableAsset: async (assetId) => {
       const asset = get().assetsById[assetId]
-      if (!asset || asset.kind !== 'reference' || !asset.isReusable) return
+      if (!asset || !asset.isReusable) return
 
       const nextAsset: ImageAsset = {
         ...asset,

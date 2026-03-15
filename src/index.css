@@ -154,6 +154,7 @@ body {
   overflow: hidden;
   font-size: 14px;
   line-height: 1.5;
+  text-wrap: balance;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }

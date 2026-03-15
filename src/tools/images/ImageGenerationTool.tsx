@@ -20,6 +20,7 @@ import {
   Download,
   Loader2,
   Pause,
+  Pencil,
   Play,
   RefreshCcw,
   Sparkles,
@@ -33,6 +34,8 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
+import { DrawingCanvas } from '@/chat/DrawingCanvas'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   DropdownMenu,
@@ -40,6 +43,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -52,21 +56,26 @@ import { Textarea } from '@/components/ui/textarea'
 import { requestGeneratedImages } from '@/utils/imageApiClient'
 import { showBackgroundTaskCompletionToast } from '@/utils/taskCompletionToast'
 import { useImageGenerationStore } from '@/stores/imageGenerationStore'
+import type { DrawingCanvasRef, DrawingData } from '@/types/canvas'
 import type {
   ImageAsset,
   ImageAspectRatio,
+  ImageDraft,
   ImageGenerationModel,
   ImageGridZoom,
+  ImagePipeline,
   ImageSize,
   ImageTurn,
   ImageTurnStatus,
 } from '@/types/images'
 import {
+  DEFAULT_IMAGE_DRAFT,
   IMAGE_ASPECT_RATIO_OPTIONS,
   IMAGE_COUNT_OPTIONS,
   IMAGE_GENERATION_MODELS,
   IMAGE_GRID_ZOOM_OPTIONS,
   IMAGE_SIZE_OPTIONS,
+  MAX_IMAGE_REFERENCE_COUNT,
 } from '@/types/images'
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -110,6 +119,10 @@ function buildDownloadBaseName(prompt: string, index: number) {
     .slice(0, 48) || 'image'
 
   return `${slug}-${index + 1}`
+}
+
+function buildDrawingReferenceName(index: number) {
+  return `drawing-reference-${index}.png`
 }
 
 function normalizeMimeType(mimeType: string) {
@@ -406,9 +419,25 @@ function TurnStatusBadge({ status }: { status: ImageTurnStatus }) {
   return <Badge variant={getStatusVariant(status)}>{getStatusLabel(status)}</Badge>
 }
 
+function isDraftDirty(draft: ImageDraft) {
+  return Boolean(
+    draft.prompt.trim()
+    || draft.referenceAssetIds.length > 0
+    || draft.origin !== 'new'
+    || draft.sourceTurnId
+    || draft.pipelineId
+    || draft.model !== DEFAULT_IMAGE_DRAFT.model
+    || draft.count !== DEFAULT_IMAGE_DRAFT.count
+    || draft.aspectRatio !== DEFAULT_IMAGE_DRAFT.aspectRatio
+    || draft.imageSize !== DEFAULT_IMAGE_DRAFT.imageSize
+  )
+}
+
 export default function ImageGenerationTool() {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const libraryFileInputRef = useRef<HTMLInputElement>(null)
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const drawingCanvasRef = useRef<DrawingCanvasRef>(null)
   const threadScrollRef = useRef<HTMLDivElement>(null)
   const composerOverlayRef = useRef<HTMLDivElement>(null)
   const workerBusyRef = useRef(false)
@@ -422,7 +451,9 @@ export default function ImageGenerationTool() {
     hydrationError,
     turns,
     assetsById,
+    pipelines,
     draft,
+    composerDrawingData,
     gridZoom,
     queuePaused,
     hydrate,
@@ -431,9 +462,19 @@ export default function ImageGenerationTool() {
     setDraftCount,
     setDraftAspectRatio,
     setDraftImageSize,
+    setComposerDrawingData,
+    clearComposerDrawingData,
     resetDraft,
     addDraftReference,
+    addDraftReferenceIds,
+    addReusableAsset,
+    renameAsset,
+    deleteReusableAsset,
     removeDraftReference,
+    savePipeline,
+    updatePipeline,
+    applyPipeline,
+    deletePipeline,
     enqueueDraft,
     pauseQueue,
     resumeQueue,
@@ -451,6 +492,14 @@ export default function ImageGenerationTool() {
   const [expandedTurnIds, setExpandedTurnIds] = useState<Record<string, boolean>>({})
   const [selectedImage, setSelectedImage] = useState<ViewerSelection | null>(null)
   const [composerBottomPadding, setComposerBottomPadding] = useState(220)
+  const [isDrawingDialogOpen, setIsDrawingDialogOpen] = useState(false)
+  const [isLibraryDialogOpen, setIsLibraryDialogOpen] = useState(false)
+  const [isPipelineDialogOpen, setIsPipelineDialogOpen] = useState(false)
+  const [selectedLibraryAssetIds, setSelectedLibraryAssetIds] = useState<string[]>([])
+  const [newPipelineName, setNewPipelineName] = useState('')
+  const [pendingPipelineToApply, setPendingPipelineToApply] = useState<string | null>(null)
+  const [pipelinePendingDelete, setPipelinePendingDelete] = useState<ImagePipeline | null>(null)
+  const [libraryAssetPendingDelete, setLibraryAssetPendingDelete] = useState<ImageAsset | null>(null)
 
   useEffect(() => {
     void hydrate()
@@ -466,6 +515,28 @@ export default function ImageGenerationTool() {
   const draftReferenceAssets = useMemo(
     () => draft.referenceAssetIds.map((assetId) => assetsById[assetId]).filter(Boolean),
     [assetsById, draft.referenceAssetIds]
+  )
+  const reusableAssets = useMemo(
+    () => Object.values(assetsById)
+      .filter((asset) => asset.isReusable)
+      .sort((a, b) => b.createdAt - a.createdAt),
+    [assetsById]
+  )
+  const activePipeline = useMemo(
+    () => (draft.pipelineId ? pipelines.find((pipeline) => pipeline.id === draft.pipelineId) ?? null : null),
+    [draft.pipelineId, pipelines]
+  )
+  const activePipelinePinnedAssetIds = useMemo(
+    () => new Set(activePipeline?.pinnedAssetIds ?? []),
+    [activePipeline]
+  )
+  const pendingPipeline = useMemo(
+    () => (pendingPipelineToApply ? pipelines.find((pipeline) => pipeline.id === pendingPipelineToApply) ?? null : null),
+    [pendingPipelineToApply, pipelines]
+  )
+  const sortedPipelines = useMemo(
+    () => [...pipelines].sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt),
+    [pipelines]
   )
   const selectedTurn = useMemo(
     () => (selectedImage ? turns.find((turn) => turn.id === selectedImage.turnId) ?? null : null),
@@ -497,6 +568,8 @@ export default function ImageGenerationTool() {
     () => Boolean(selectedViewerItem && normalizeMimeType(selectedViewerItem.asset.mimeType) !== 'image/png'),
     [selectedViewerItem]
   )
+  const referenceUsageLabel = `${draft.referenceAssetIds.length}/${MAX_IMAGE_REFERENCE_COUNT} refs`
+  const isComposerDirty = useMemo(() => isDraftDirty(draft), [draft])
 
   const tailSignature = useMemo(() => {
     const lastTurn = turns[turns.length - 1]
@@ -526,19 +599,59 @@ export default function ImageGenerationTool() {
   }, [selectedImage, selectedTurn, selectedViewerItem])
 
   const attachFiles = useCallback(async (files: File[]) => {
+    let addedCount = 0
+
     for (const file of files) {
       if (!file.type.startsWith('image/')) {
         toast.error(`Skipped ${file.name}: not an image`)
         continue
       }
 
-      await addDraftReference({
-        blob: file,
-        mimeType: file.type,
-        name: file.name,
-      })
+      try {
+        await addDraftReference({
+          blob: file,
+          mimeType: file.type,
+          name: file.name,
+        })
+        addedCount += 1
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to add the image.'
+        toast.error(message)
+        break
+      }
+    }
+
+    if (addedCount > 0) {
+      toast.success(`${addedCount} image${addedCount === 1 ? '' : 's'} added to this draft`)
     }
   }, [addDraftReference])
+
+  const uploadReusableFiles = useCallback(async (files: File[]) => {
+    let addedCount = 0
+
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) {
+        toast.error(`Skipped ${file.name}: not an image`)
+        continue
+      }
+
+      try {
+        await addReusableAsset({
+          blob: file,
+          mimeType: file.type,
+          name: file.name,
+        })
+        addedCount += 1
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to add the reusable asset.'
+        toast.error(message)
+      }
+    }
+
+    if (addedCount > 0) {
+      toast.success(`${addedCount} reusable asset${addedCount === 1 ? '' : 's'} saved`)
+    }
+  }, [addReusableAsset])
 
   const handleFileSelect = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
@@ -546,6 +659,13 @@ export default function ImageGenerationTool() {
     }
     event.target.value = ''
   }, [attachFiles])
+
+  const handleLibraryUploadSelect = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files) {
+      await uploadReusableFiles(Array.from(event.target.files))
+    }
+    event.target.value = ''
+  }, [uploadReusableFiles])
 
   const handleComposerDrop = useCallback(async (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -565,10 +685,59 @@ export default function ImageGenerationTool() {
     }
   }, [attachFiles])
 
+  const handleComposerDrawingDataChange = useCallback((nextDrawingData: DrawingData | null) => {
+    void setComposerDrawingData(nextDrawingData)
+  }, [setComposerDrawingData])
+
+  const handleAddDrawingReference = useCallback(async () => {
+    const snapshot = await drawingCanvasRef.current?.captureImage()
+
+    if (!snapshot) {
+      toast.error('Draw something first')
+      return
+    }
+
+    try {
+      const blob = await dataUrlToBlob(snapshot)
+      const nextReferenceIndex = draft.referenceAssetIds.length + 1
+
+      await addDraftReference({
+        blob,
+        mimeType: blob.type || 'image/png',
+        name: buildDrawingReferenceName(nextReferenceIndex),
+      })
+
+      toast.success('Drawing added to this draft')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add the drawing as a reference.'
+      toast.error(message)
+    }
+  }, [addDraftReference, draft.referenceAssetIds.length])
+
+  const handleClearDrawing = useCallback(async () => {
+    await clearComposerDrawingData()
+  }, [clearComposerDrawingData])
+
   const focusComposer = useCallback(() => {
     requestAnimationFrame(() => {
       composerTextareaRef.current?.focus()
     })
+  }, [])
+
+  const handleDrawingDialogOpenChange = useCallback((open: boolean) => {
+    setIsDrawingDialogOpen(open)
+
+    if (!open) {
+      focusComposer()
+    }
+  }, [focusComposer])
+
+  const toggleLibraryAssetSelection = useCallback((assetId: string) => {
+    setSelectedLibraryAssetIds((current) =>
+      current.includes(assetId)
+        ? current.filter((id) => id !== assetId)
+        : [...current, assetId]
+    )
   }, [])
 
   const openViewer = useCallback((turnId: string, assetId: string) => {
@@ -650,6 +819,12 @@ export default function ImageGenerationTool() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!isLibraryDialogOpen) {
+      setSelectedLibraryAssetIds([])
+    }
+  }, [isLibraryDialogOpen])
+
   const handleCopyPrompt = useCallback(async (turn: ImageTurn) => {
     await navigator.clipboard.writeText(turn.prompt)
     toast.success('Prompt copied')
@@ -690,15 +865,116 @@ export default function ImageGenerationTool() {
     toast.success('Composer prefilled for edit')
   }, [focusComposer, prefillForEdit])
 
+  const handleAddSelectedLibraryAssets = useCallback(async () => {
+    if (selectedLibraryAssetIds.length === 0) return
+
+    try {
+      await addDraftReferenceIds(selectedLibraryAssetIds)
+      toast.success(`${selectedLibraryAssetIds.length} reusable asset${selectedLibraryAssetIds.length === 1 ? '' : 's'} added to the draft`)
+      setSelectedLibraryAssetIds([])
+      setIsLibraryDialogOpen(false)
+      focusComposer()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add reusable assets.'
+      toast.error(message)
+    }
+  }, [addDraftReferenceIds, focusComposer, selectedLibraryAssetIds])
+
+  const handleAddSingleReusableAsset = useCallback(async (assetId: string) => {
+    try {
+      await addDraftReferenceIds([assetId])
+      toast.success('Reusable asset added to the draft')
+      focusComposer()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add the reusable asset.'
+      toast.error(message)
+    }
+  }, [addDraftReferenceIds, focusComposer])
+
+  const handleRenameReusableAsset = useCallback(async (assetId: string, nextName: string) => {
+    await renameAsset(assetId, nextName)
+  }, [renameAsset])
+
+  const handleSavePipeline = useCallback(async () => {
+    if (!newPipelineName.trim()) {
+      toast.error('Name the pipeline first')
+      return
+    }
+
+    if (!draft.prompt.trim()) {
+      toast.error('Enter a prompt before saving a pipeline')
+      return
+    }
+
+    const pipelineId = await savePipeline(newPipelineName)
+    if (!pipelineId) return
+
+    setNewPipelineName('')
+    setIsPipelineDialogOpen(false)
+    focusComposer()
+    toast.success('Pipeline saved')
+  }, [draft.prompt, focusComposer, newPipelineName, savePipeline])
+
+  const handleUpdateActivePipeline = useCallback(async () => {
+    if (!activePipeline) return
+
+    if (!draft.prompt.trim()) {
+      toast.error('Enter a prompt before updating this pipeline')
+      return
+    }
+
+    await updatePipeline(activePipeline.id)
+    toast.success('Pipeline updated')
+  }, [activePipeline, draft.prompt, updatePipeline])
+
+  const commitApplyPipeline = useCallback(async (pipelineId: string) => {
+    await applyPipeline(pipelineId)
+    setPendingPipelineToApply(null)
+    setIsPipelineDialogOpen(false)
+    focusComposer()
+    toast.success('Pipeline applied')
+  }, [applyPipeline, focusComposer])
+
+  const handleApplyPipelineRequest = useCallback(async (pipelineId: string) => {
+    if (isComposerDirty) {
+      setPendingPipelineToApply(pipelineId)
+      return
+    }
+
+    await commitApplyPipeline(pipelineId)
+  }, [commitApplyPipeline, isComposerDirty])
+
+  const handleConfirmReusableAssetDelete = useCallback(async () => {
+    if (!libraryAssetPendingDelete) return
+
+    await deleteReusableAsset(libraryAssetPendingDelete.id)
+    setSelectedLibraryAssetIds((current) => current.filter((assetId) => assetId !== libraryAssetPendingDelete.id))
+    setLibraryAssetPendingDelete(null)
+    toast.success('Reusable asset deleted')
+  }, [deleteReusableAsset, libraryAssetPendingDelete])
+
+  const handleConfirmPipelineDelete = useCallback(async () => {
+    if (!pipelinePendingDelete) return
+
+    await deletePipeline(pipelinePendingDelete.id)
+    setPipelinePendingDelete(null)
+    toast.success('Pipeline deleted')
+  }, [deletePipeline, pipelinePendingDelete])
+
   const handleEnqueue = useCallback(async () => {
     if (!draft.prompt.trim()) {
       toast.error('Enter a prompt first')
       return
     }
 
+    if (draft.referenceAssetIds.length > MAX_IMAGE_REFERENCE_COUNT) {
+      toast.error(`You can use up to ${MAX_IMAGE_REFERENCE_COUNT} reference images per generation.`)
+      return
+    }
+
     const turnId = await enqueueDraft()
     if (!turnId) return
-  }, [draft.prompt, enqueueDraft])
+  }, [draft.prompt, draft.referenceAssetIds.length, enqueueDraft])
 
   const handleCancelCurrent = useCallback(() => {
     currentAbortControllerRef.current?.abort()
@@ -818,18 +1094,19 @@ export default function ImageGenerationTool() {
     <ToolShell>
       <ToolHeader
         title="Image Gen"
-        description="Persistent Nano Banana image conversations with queueing, references, and versioning."
+        description="Persistent Nano Banana image conversations with reusable assets, saved pipelines, queueing, and versioning."
       />
 
       <ToolBody className="overflow-hidden p-0">
         <div className="flex h-full min-h-0 flex-col">
           <div className="border-b border-border/70 px-5 py-2.5">
-            <ToolContainer className="space-y-0">
+            <ToolContainer className="space-y-3">
               <div className="flex w-full flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="outline">Stored locally in this browser</Badge>
                   <Badge variant={runningTurn ? 'secondary' : 'outline'}>{queueSummary}</Badge>
                   <Badge variant="outline">{turns.length} turn{turns.length === 1 ? '' : 's'}</Badge>
+                  <Badge variant="outline">{referenceUsageLabel}</Badge>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -866,6 +1143,24 @@ export default function ImageGenerationTool() {
                   ) : null}
                 </div>
               </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" size="sm" variant="outline" onClick={() => setIsPipelineDialogOpen(true)}>
+                  Pipelines
+                  <Badge variant="secondary" className="ml-1">{pipelines.length}</Badge>
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => setIsLibraryDialogOpen(true)}>
+                  Asset library
+                  <Badge variant="secondary" className="ml-1">{reusableAssets.length}</Badge>
+                </Button>
+                {activePipeline ? (
+                  <Badge variant="secondary" className="rounded-full px-3 py-1.5">
+                    Active pipeline: {activePipeline.name}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline">Freeform draft</Badge>
+                )}
+              </div>
             </ToolContainer>
           </div>
 
@@ -901,7 +1196,7 @@ export default function ImageGenerationTool() {
                         Start an image conversation
                       </h2>
                       <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                        Generated results, references, prompts, and queue state will stay saved locally on this device. Use the composer below to create a first image or bring references into the thread.
+                        Generated results, reusable assets, prompts, pipelines, and queue state stay saved locally on this device. Use the composer below to create a first image, pull in library assets, or save a repeatable pipeline.
                       </p>
                     </div>
                   ) : (
@@ -1215,7 +1510,44 @@ export default function ImageGenerationTool() {
                     onDrop={handleComposerDrop}
                     onDragOver={(event) => event.preventDefault()}
                   >
-                    {(draft.origin !== 'new' || draft.sourceTurnId) ? (
+                    {activePipeline ? (
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/16 px-4 py-2.5">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">
+                            Pipeline active: {activePipeline.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Saved prompt, settings, and {activePipeline.pinnedAssetIds.length} pinned reference{activePipeline.pinnedAssetIds.length === 1 ? '' : 's'}. New images only affect the next run unless you update the pipeline.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              void handleUpdateActivePipeline()
+                            }}
+                          >
+                            Update pipeline
+                          </Button>
+                          <Button type="button" size="sm" variant="ghost" onClick={() => setIsPipelineDialogOpen(true)}>
+                            Manage
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              void resetDraft()
+                            }}
+                          >
+                            <X className="h-4 w-4" />
+                            Clear draft
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (draft.origin !== 'new' || draft.sourceTurnId) ? (
                       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/16 px-4 py-2.5">
                         <div>
                           <p className="text-sm font-medium text-foreground">
@@ -1243,6 +1575,18 @@ export default function ImageGenerationTool() {
                       <div className="flex flex-wrap gap-3 px-4 pt-4">
                         {draftReferenceAssets.map((asset, index) => (
                           <div key={asset.id} className="group relative overflow-hidden rounded-2xl border border-border/70 bg-muted/30 p-1.5">
+                            <div className="absolute left-2 top-2 z-10 flex flex-wrap gap-1">
+                              {activePipelinePinnedAssetIds.has(asset.id) ? (
+                                <Badge variant="secondary" className="px-2 py-0.5 text-[10px]">
+                                  Pipeline
+                                </Badge>
+                              ) : null}
+                              {asset.isReusable && !activePipelinePinnedAssetIds.has(asset.id) ? (
+                                <Badge variant="outline" className="bg-background/90 px-2 py-0.5 text-[10px]">
+                                  Library
+                                </Badge>
+                              ) : null}
+                            </div>
                             <img
                               src={asset.url}
                               alt={asset.name || 'Draft reference'}
@@ -1282,7 +1626,7 @@ export default function ImageGenerationTool() {
                       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                         <Button type="button" variant="ghost" size="sm" className="h-9 shrink-0 rounded-[0.85rem]" onClick={() => fileInputRef.current?.click()}>
                           <Upload className="h-4 w-4" />
-                          Add images
+                          Upload new
                         </Button>
                         <input
                           ref={fileInputRef}
@@ -1294,6 +1638,19 @@ export default function ImageGenerationTool() {
                             void handleFileSelect(event)
                           }}
                         />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-9 shrink-0 rounded-[0.85rem]"
+                          onClick={() => setIsDrawingDialogOpen(true)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                          Draw
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm" className="h-9 shrink-0 rounded-[0.85rem]" onClick={() => setIsLibraryDialogOpen(true)}>
+                          Add from library
+                        </Button>
 
                         <Select value={draft.model} onValueChange={(value) => { void setDraftModel(value as ImageGenerationModel) }}>
                           <SelectTrigger className="h-9 min-w-[10.5rem] flex-1 basis-[11rem] rounded-[0.85rem] bg-background/70 sm:max-w-[11rem] sm:flex-none">
@@ -1349,6 +1706,7 @@ export default function ImageGenerationTool() {
                       </div>
 
                       <div className="ml-auto flex shrink-0 flex-col items-start gap-1 md:items-end">
+                        <p className="text-xs text-muted-foreground">{referenceUsageLabel}</p>
                         <Button
                           type="button"
                           onClick={() => {
@@ -1379,6 +1737,366 @@ export default function ImageGenerationTool() {
           </div>
         </div>
       </ToolBody>
+
+      <Dialog open={isDrawingDialogOpen} onOpenChange={handleDrawingDialogOpenChange}>
+        <DialogContent className="flex max-h-[min(94vh,58rem)] max-w-[min(96vw,76rem)] flex-col gap-0 overflow-hidden border-border/70 bg-card p-0">
+          <DialogHeader className="border-b border-border/60 px-6 pb-4 pt-6">
+            <DialogTitle>Sketch a reference</DialogTitle>
+            <DialogDescription>
+              Draw rough layouts, subject placement, or style cues, then append each capture into this draft as a new reference image.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-hidden p-4 sm:p-5">
+            <div className="h-[min(72vh,42rem)] min-h-[22rem] overflow-hidden rounded-[1.4rem] border border-border/70 bg-background">
+              <DrawingCanvas
+                ref={drawingCanvasRef}
+                drawingData={composerDrawingData}
+                onDrawingDataChange={handleComposerDrawingDataChange}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 px-4 py-3 sm:px-6">
+            <p className="text-xs leading-5 text-muted-foreground">
+              Each click on <span className="font-medium text-foreground">Add as reference</span> appends a fresh image to the current draft. The drawing stays here until you clear it.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  void handleClearDrawing()
+                }}
+                disabled={!composerDrawingData}
+              >
+                Clear drawing
+              </Button>
+              <Button type="button" variant="outline" onClick={() => handleDrawingDialogOpenChange(false)}>
+                Close
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  void handleAddDrawingReference()
+                }}
+                disabled={!isHydrated}
+              >
+                Add as reference
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isPipelineDialogOpen} onOpenChange={setIsPipelineDialogOpen}>
+        <DialogContent className="max-w-[min(94vw,72rem)] border-border/70 bg-card">
+          <DialogHeader>
+            <DialogTitle>Saved pipelines</DialogTitle>
+            <DialogDescription>
+              Restore a full image-gen setup with pinned reusable assets, prompt text, and output settings.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+              {sortedPipelines.length > 0 ? (
+                sortedPipelines.map((pipeline) => {
+                  const isActive = activePipeline?.id === pipeline.id
+
+                  return (
+                    <div
+                      key={pipeline.id}
+                      className={cn(
+                        'rounded-[1.35rem] border border-border/70 bg-muted/15 p-4',
+                        isActive && 'border-foreground/20 bg-muted/25'
+                      )}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium text-foreground">{pipeline.name}</p>
+                            {isActive ? <Badge variant="secondary">Active</Badge> : null}
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {pipeline.pinnedAssetIds.length} pinned ref{pipeline.pinnedAssetIds.length === 1 ? '' : 's'} • {pipeline.count} image{pipeline.count === 1 ? '' : 's'} • {pipeline.aspectRatio} • {pipeline.imageSize}
+                          </p>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {getPromptPreview(pipeline.prompt)}
+                          </p>
+                          <p className="mt-3 text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+                            Updated {dateFormatter.format(pipeline.updatedAt)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button type="button" size="sm" onClick={() => {
+                          void handleApplyPipelineRequest(pipeline.id)
+                        }}>
+                          {isActive ? 'Reapply' : 'Apply'}
+                        </Button>
+                        {isActive ? (
+                          <Button type="button" size="sm" variant="outline" onClick={() => {
+                            void handleUpdateActivePipeline()
+                          }}>
+                            Update from current draft
+                          </Button>
+                        ) : null}
+                        <Button type="button" size="sm" variant="ghost" onClick={() => setPipelinePendingDelete(pipeline)}>
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                })
+              ) : (
+                <div className="flex min-h-56 items-center justify-center rounded-[1.5rem] border border-dashed border-border/70 bg-muted/15 px-6 text-center">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">No saved pipelines yet</p>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                      Save the current draft to capture a repeatable setup with pinned brand assets and prompt text.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-4 rounded-[1.35rem] border border-border/70 bg-muted/15 p-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">Save current draft</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  Saving a pipeline promotes the current draft references into the reusable asset library automatically, then pins them into the saved setup.
+                </p>
+              </div>
+
+              <Input
+                value={newPipelineName}
+                onChange={(event) => setNewPipelineName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void handleSavePipeline()
+                  }
+                }}
+                placeholder="Brand setup, product edit, lifestyle batch..."
+              />
+
+              <Button
+                type="button"
+                className="w-full"
+                disabled={!newPipelineName.trim() || !draft.prompt.trim()}
+                onClick={() => {
+                  void handleSavePipeline()
+                }}
+              >
+                Save as new pipeline
+              </Button>
+
+              {activePipeline ? (
+                <div className="rounded-[1rem] border border-border/70 bg-background/80 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    Active now
+                  </p>
+                  <p className="mt-2 text-sm font-medium text-foreground">{activePipeline.name}</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    Update it when you want the current draft to become the new baseline that reappears after each run.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="mt-3 w-full"
+                    onClick={() => {
+                      void handleUpdateActivePipeline()
+                    }}
+                  >
+                    Update active pipeline
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isLibraryDialogOpen} onOpenChange={setIsLibraryDialogOpen}>
+        <DialogContent className="max-w-[min(94vw,76rem)] border-border/70 bg-card">
+          <DialogHeader>
+            <DialogTitle>Reusable asset library</DialogTitle>
+            <DialogDescription>
+              Keep brand images here, rename them once, and pull them into any draft alongside fresh uploads.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">{reusableAssets.length} reusable</Badge>
+                <Badge variant="outline">{selectedLibraryAssetIds.length} selected</Badge>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" size="sm" variant="outline" onClick={() => libraryFileInputRef.current?.click()}>
+                  <Upload className="h-4 w-4" />
+                  Upload to library
+                </Button>
+                <input
+                  ref={libraryFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    void handleLibraryUploadSelect(event)
+                  }}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={selectedLibraryAssetIds.length === 0}
+                  onClick={() => {
+                    void handleAddSelectedLibraryAssets()
+                  }}
+                >
+                  Add selected to draft
+                </Button>
+              </div>
+            </div>
+
+            {reusableAssets.length > 0 ? (
+              <div className="grid max-h-[60vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+                {reusableAssets.map((asset, index) => {
+                  const isSelected = selectedLibraryAssetIds.includes(asset.id)
+                  const isInDraft = draft.referenceAssetIds.includes(asset.id)
+
+                  return (
+                    <div
+                      key={asset.id}
+                      className={cn(
+                        'rounded-[1.3rem] border border-border/70 bg-muted/15 p-3',
+                        isSelected && 'border-foreground/20 bg-muted/25'
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={() => toggleLibraryAssetSelection(asset.id)}
+                          className="flex items-center gap-2 text-left"
+                          aria-pressed={isSelected}
+                        >
+                          {isSelected ? (
+                            <CheckCircle2 className="h-4 w-4 text-foreground" />
+                          ) : (
+                            <span className="h-4 w-4 rounded-full border border-border/80" />
+                          )}
+                          <span className="text-sm font-medium text-foreground">
+                            {asset.name || `Reusable asset ${index + 1}`}
+                          </span>
+                        </button>
+
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          {isInDraft ? <Badge variant="secondary">In draft</Badge> : null}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              void handleAddSingleReusableAsset(asset.id)
+                            }}
+                          >
+                            Add
+                          </Button>
+                          <Button type="button" size="icon" variant="ghost" onClick={() => setLibraryAssetPendingDelete(asset)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 overflow-hidden rounded-[1rem] border border-border/60 bg-background/80">
+                        <img
+                          src={asset.url}
+                          alt={asset.name || `Reusable asset ${index + 1}`}
+                          className="h-44 w-full object-cover"
+                        />
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        <Input
+                          defaultValue={asset.name ?? ''}
+                          placeholder="Rename asset"
+                          onBlur={(event) => {
+                            void handleRenameReusableAsset(asset.id, event.currentTarget.value)
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              event.currentTarget.blur()
+                            }
+                          }}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Added {dateFormatter.format(asset.createdAt)}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="flex min-h-64 items-center justify-center rounded-[1.5rem] border border-dashed border-border/70 bg-muted/15 px-6 text-center">
+                <div>
+                  <p className="text-sm font-medium text-foreground">No reusable assets yet</p>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                    Upload your brand images here once, then reuse them whenever you need them in a draft or pipeline.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        isOpen={Boolean(pendingPipeline)}
+        title="Apply this pipeline?"
+        message={`This will replace the current draft with "${pendingPipeline?.name ?? 'the selected pipeline'}". Any unsaved draft changes will be lost.`}
+        confirmLabel="Apply pipeline"
+        cancelLabel="Keep draft"
+        onConfirm={() => {
+          if (pendingPipeline) {
+            void commitApplyPipeline(pendingPipeline.id)
+          }
+        }}
+        onCancel={() => setPendingPipelineToApply(null)}
+      />
+
+      <ConfirmDialog
+        isOpen={Boolean(pipelinePendingDelete)}
+        title="Delete this pipeline?"
+        message={`"${pipelinePendingDelete?.name ?? 'This pipeline'}" will be removed from the saved list. Historical turns will stay intact.`}
+        confirmLabel="Delete pipeline"
+        cancelLabel="Keep pipeline"
+        variant="danger"
+        onConfirm={() => {
+          void handleConfirmPipelineDelete()
+        }}
+        onCancel={() => setPipelinePendingDelete(null)}
+      />
+
+      <ConfirmDialog
+        isOpen={Boolean(libraryAssetPendingDelete)}
+        title="Delete this reusable asset?"
+        message={`"${libraryAssetPendingDelete?.name ?? 'This reusable asset'}" will be removed from the library and from any saved pipelines. Historical turns that already used it will stay intact.`}
+        confirmLabel="Delete asset"
+        cancelLabel="Keep asset"
+        variant="danger"
+        onConfirm={() => {
+          void handleConfirmReusableAssetDelete()
+        }}
+        onCancel={() => setLibraryAssetPendingDelete(null)}
+      />
 
       <Dialog open={Boolean(selectedImage && selectedTurn && selectedViewerItem)} onOpenChange={(open) => {
         if (!open) {

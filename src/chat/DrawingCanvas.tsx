@@ -59,8 +59,7 @@ import {
   useValue,
 } from 'tldraw';
 import 'tldraw/tldraw.css';
-import { useCanvasStore } from '../stores/canvasStore';
-import type { DrawingCanvasRef } from '../types/canvas';
+import type { DrawingCanvasRef, DrawingData } from '../types/canvas';
 
 function deleteSelectionOrLatestStroke(editor: any) {
   if (editor.getIsReadonly()) return;
@@ -80,6 +79,34 @@ function deleteSelectionOrLatestStroke(editor: any) {
   const lastShapeId = pageShapeIds[pageShapeIds.length - 1];
   editor.markHistoryStoppingPoint('delete-latest-drawing');
   editor.deleteShapes([lastShapeId]);
+}
+
+function clearCanvasEditor(editor: any) {
+  const pages = editor.getPages();
+  if (pages.length === 0) return;
+
+  const [firstPage, ...additionalPages] = pages;
+  if (!firstPage) return;
+
+  editor.setCurrentPage(firstPage.id);
+
+  for (const page of additionalPages) {
+    editor.deletePage(page.id);
+  }
+
+  const currentShapeIds = Array.from(editor.getCurrentPageShapeIds().values());
+  if (currentShapeIds.length > 0) {
+    editor.deleteShapes(currentShapeIds);
+  }
+}
+
+function serializeDrawingData(drawingData: DrawingData | null) {
+  return drawingData ? JSON.stringify(drawingData) : null;
+}
+
+interface DrawingCanvasProps {
+  drawingData: DrawingData | null;
+  onDrawingDataChange: (data: DrawingData | null) => void;
 }
 
 function DrawingQuickActionsContent() {
@@ -318,23 +345,14 @@ const DrawingNavigationPanel = memo(function DrawingNavigationPanel() {
   );
 });
 
-// Inner component to access editor via hook
-function DrawingCanvasInner({ onEditorReady }: { onEditorReady: (editor: any) => void }) {
-  const editor = useEditor();
-
-  useEffect(() => {
-    if (editor) {
-      onEditorReady(editor);
-    }
-  }, [editor, onEditorReady]);
-
-  return null;
-}
-
-export const DrawingCanvas = forwardRef<DrawingCanvasRef>((_props, ref) => {
-  const { drawingData, setDrawingData } = useCanvasStore();
+export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(function DrawingCanvas(
+  { drawingData, onDrawingDataChange },
+  ref
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<any>(null);
+  const isApplyingExternalDrawingRef = useRef(false);
+  const lastSerializedDrawingRef = useRef<string | null>(null);
   const components = useMemo(() => ({
     QuickActions: DrawingQuickActions,
     ActionsMenu: DrawingActionsMenu,
@@ -347,6 +365,33 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef>((_props, ref) => {
   const options = useMemo(() => ({
     actionShortcutsLocation: 'toolbar' as const,
   }), []);
+
+  const applyDrawingData = useCallback((editor: any, nextDrawingData: DrawingData | null) => {
+    const serializedNextDrawing = serializeDrawingData(nextDrawingData);
+    const serializedCurrentDrawing = serializeDrawingData(getSnapshot(editor.store));
+
+    if (serializedNextDrawing === serializedCurrentDrawing) {
+      lastSerializedDrawingRef.current = serializedNextDrawing;
+      return;
+    }
+
+    isApplyingExternalDrawingRef.current = true;
+
+    try {
+      if (nextDrawingData) {
+        loadSnapshot(editor.store, nextDrawingData);
+      } else {
+        clearCanvasEditor(editor);
+      }
+
+      editor.setCurrentTool('draw');
+      lastSerializedDrawingRef.current = serializedNextDrawing;
+    } catch (error) {
+      console.warn('Could not apply drawing data:', error);
+    } finally {
+      isApplyingExternalDrawingRef.current = false;
+    }
+  }, []);
 
   // Expose the captureImage method via ref
   useImperativeHandle(ref, () => ({
@@ -404,25 +449,25 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef>((_props, ref) => {
     // Store the editor reference for capture
     editorRef.current = editor;
 
-    // Restore saved data if it exists
-    if (drawingData) {
-      try {
-        // Load snapshot using the correct tldraw v4 API
-        loadSnapshot(editor.store, drawingData);
-      } catch (e) {
-        console.warn('Could not restore drawing data:', e);
-      }
-    }
-
-    // Set default tool to pen (draw)
-    editor.setCurrentTool('draw');
+    applyDrawingData(editor, drawingData);
 
     // Subscribe to changes using the history listener
     const unsubscribe = editor.store.listen(() => {
+      if (isApplyingExternalDrawingRef.current) {
+        return;
+      }
+
       // Save the store snapshot whenever there's a change
       try {
         const snapshot = getSnapshot(editor.store);
-        setDrawingData(snapshot);
+        const serializedSnapshot = serializeDrawingData(snapshot);
+
+        if (serializedSnapshot === lastSerializedDrawingRef.current) {
+          return;
+        }
+
+        lastSerializedDrawingRef.current = serializedSnapshot;
+        onDrawingDataChange(snapshot);
       } catch (e) {
         console.error('Failed to get snapshot:', e);
       }
@@ -432,7 +477,13 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef>((_props, ref) => {
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [drawingData, setDrawingData]);
+  }, [applyDrawingData, drawingData, onDrawingDataChange]);
+
+  useEffect(() => {
+    if (!editorRef.current) return;
+
+    applyDrawingData(editorRef.current, drawingData);
+  }, [applyDrawingData, drawingData]);
 
   return (
     <div ref={containerRef} className="drawing-canvas-root h-full w-full">
@@ -441,9 +492,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef>((_props, ref) => {
         inferDarkMode
         components={components}
         options={options}
-      >
-        <DrawingCanvasInner onEditorReady={() => {}} />
-      </Tldraw>
+      />
     </div>
   );
 });

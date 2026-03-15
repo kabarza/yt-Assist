@@ -1,3 +1,5 @@
+import type { DrawingData } from './canvas'
+
 export type ImageGenerationModel =
   | 'gemini-3.1-flash-image-preview'
   | 'gemini-3-pro-image-preview'
@@ -71,12 +73,13 @@ export interface ImagePipeline {
   updatedAt: number
 }
 
-export const IMAGE_THREAD_SNAPSHOT_VERSION = 2 as const
+export const IMAGE_THREAD_SNAPSHOT_VERSION = 3 as const
 
 export interface ImageThreadSnapshot {
   version: typeof IMAGE_THREAD_SNAPSHOT_VERSION
   turns: ImageTurn[]
   draft: ImageDraft
+  composerDrawingData: DrawingData | null
   gridZoom: ImageGridZoom
   queuePaused: boolean
   pipelines: ImagePipeline[]
