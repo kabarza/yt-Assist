@@ -167,25 +167,6 @@ function buildSnapshot(
   }
 }
 
-function clearDraftAfterSubmit(draft: ImageDraft, pipelines: ImagePipeline[]): ImageDraft {
-  const activePipeline = draft.pipelineId
-    ? pipelines.find((pipeline) => pipeline.id === draft.pipelineId) ?? null
-    : null
-
-  if (activePipeline) {
-    return buildDraftFromPipeline(activePipeline)
-  }
-
-  return {
-    ...draft,
-    prompt: '',
-    referenceAssetIds: [],
-    origin: 'new',
-    sourceTurnId: undefined,
-    pipelineId: null,
-  }
-}
-
 function getRetainedAssetIds(
   turns: ImageTurn[],
   draft: ImageDraft,
@@ -783,7 +764,6 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
 
       set((currentState) => ({
         turns: [...currentState.turns, turn],
-        draft: clearDraftAfterSubmit(currentState.draft, currentState.pipelines),
       }))
 
       await persistSnapshot()

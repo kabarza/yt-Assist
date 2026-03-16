@@ -1,0 +1,356 @@
+import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Background,
+  ConnectionLineType,
+  ReactFlow,
+  ReactFlowProvider,
+  type Connection,
+} from '@xyflow/react'
+import '@xyflow/react/dist/style.css'
+import { Boxes, Check, ChevronDown, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
+import { ToolBody, ToolShell } from '@/components/layout/ToolShell'
+import ComposeStage from '@/tools/canvas-lab/ComposeStage'
+import CanvasLabNode from '@/tools/canvas-lab/CanvasLabNode'
+import {
+  useActiveCanvasWorkspace,
+  useCanvasLabStore,
+} from '@/stores/canvasLabStore'
+
+const nodeTypes = {
+  canvasLabNode: CanvasLabNode,
+}
+
+class CanvasLabErrorBoundary extends Component<
+  { children: ReactNode },
+  { errorMessage: string | null }
+> {
+  state = {
+    errorMessage: null,
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return {
+      errorMessage: error.message || 'Canvas Lab hit a render error.',
+    }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Canvas Lab render error', error, errorInfo)
+  }
+
+  render() {
+    if (this.state.errorMessage) {
+      return (
+        <div className="flex flex-1 items-center justify-center px-6">
+          <div className="max-w-lg rounded-[1.5rem] border border-destructive/30 bg-card/95 p-8 text-center shadow-[0_24px_60px_rgba(0,0,0,0.08)]">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-[1rem] border border-destructive/20 bg-destructive/10">
+              <Boxes className="h-6 w-6 text-destructive" />
+            </div>
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">Canvas Lab crashed while rendering</h2>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              {this.state.errorMessage}
+            </p>
+            <div className="mt-5 flex justify-center">
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-[0.95rem]"
+                onClick={() => window.location.reload()}
+              >
+                Reload canvas
+              </Button>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    return this.props.children
+  }
+}
+
+function CanvasFlowSurface() {
+  const workspace = useActiveCanvasWorkspace()
+  const applyFlowNodeChanges = useCanvasLabStore((state) => state.applyFlowNodeChanges)
+  const applyFlowEdgeChanges = useCanvasLabStore((state) => state.applyFlowEdgeChanges)
+  const connectNodes = useCanvasLabStore((state) => state.connectNodes)
+  const setSelectedNodeId = useCanvasLabStore((state) => state.setSelectedNodeId)
+  const setOpenComposeNodeId = useCanvasLabStore((state) => state.setOpenComposeNodeId)
+
+  const nodes = useMemo(
+    () =>
+      (workspace?.nodes || []).map((node) => ({
+        id: node.id,
+        type: 'canvasLabNode',
+        position: node.position,
+        data: {
+          nodeId: node.id,
+        },
+      })),
+    [workspace],
+  )
+
+  const edges = useMemo(
+    () =>
+      (workspace?.edges || []).map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        type: 'default',
+        style: {
+          stroke: 'hsl(var(--foreground) / 0.3)',
+          strokeWidth: 1.65,
+        },
+        pathOptions: {
+          curvature: 0.42,
+        },
+      })),
+    [workspace],
+  )
+
+  if (!workspace) {
+    return null
+  }
+
+  return (
+    <div className="relative flex min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_top,hsl(var(--background)),hsl(var(--muted))/0.45_55%,hsl(var(--background)))]">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        fitView
+        fitViewOptions={{ padding: 0.22 }}
+        minZoom={0.35}
+        maxZoom={1.6}
+        connectionLineType={ConnectionLineType.Bezier}
+        proOptions={{ hideAttribution: true }}
+        onNodesChange={(changes) => {
+          void applyFlowNodeChanges(changes)
+        }}
+        onEdgesChange={(changes) => {
+          void applyFlowEdgeChanges(changes)
+        }}
+        onConnect={(connection: Connection) => {
+          void connectNodes(connection)
+        }}
+        onNodeClick={(_, node) => {
+          setSelectedNodeId(node.id)
+        }}
+        onNodeDoubleClick={(_, node) => {
+          if (workspace.nodes.find((entry) => entry.id === node.id)?.kind === 'compose') {
+            setOpenComposeNodeId(node.id)
+          }
+        }}
+        onPaneClick={() => {
+          setSelectedNodeId(null)
+        }}
+        nodesDraggable
+        edgesFocusable
+        nodesFocusable
+        defaultEdgeOptions={{
+          type: 'default',
+          style: {
+            stroke: 'hsl(var(--foreground) / 0.3)',
+            strokeWidth: 1.65,
+          },
+        }}
+      >
+        <Background color="hsl(var(--border) / 0.7)" gap={22} size={1} />
+      </ReactFlow>
+    </div>
+  )
+}
+
+export default function CanvasLabTool() {
+  const hydrate = useCanvasLabStore((state) => state.hydrate)
+  const isHydrated = useCanvasLabStore((state) => state.isHydrated)
+  const isHydrating = useCanvasLabStore((state) => state.isHydrating)
+  const hydrationError = useCanvasLabStore((state) => state.hydrationError)
+  const activeWorkspace = useActiveCanvasWorkspace()
+  const workspaces = useCanvasLabStore((state) => state.workspaces)
+  const activeWorkspaceId = useCanvasLabStore((state) => state.activeWorkspaceId)
+  const setActiveWorkspaceId = useCanvasLabStore((state) => state.setActiveWorkspaceId)
+  const createWorkspace = useCanvasLabStore((state) => state.createWorkspace)
+  const deleteWorkspace = useCanvasLabStore((state) => state.deleteWorkspace)
+  const renameWorkspace = useCanvasLabStore((state) => state.renameWorkspace)
+  const openComposeNodeId = useCanvasLabStore((state) => state.openComposeNodeId)
+  const setOpenComposeNodeId = useCanvasLabStore((state) => state.setOpenComposeNodeId)
+  const [isRenamingWorkspace, setIsRenamingWorkspace] = useState(false)
+  const [workspaceDraftName, setWorkspaceDraftName] = useState('')
+  const workspaceInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    void hydrate()
+  }, [hydrate])
+
+  useEffect(() => {
+    setWorkspaceDraftName(activeWorkspace?.name || 'Canvas Lab')
+  }, [activeWorkspace?.id, activeWorkspace?.name])
+
+  useEffect(() => {
+    if (!isRenamingWorkspace) return
+    workspaceInputRef.current?.focus()
+    workspaceInputRef.current?.select()
+  }, [isRenamingWorkspace])
+
+  const commitWorkspaceRename = () => {
+    if (!activeWorkspace) {
+      setIsRenamingWorkspace(false)
+      return
+    }
+
+    const trimmed = workspaceDraftName.trim()
+    if (!trimmed) {
+      setWorkspaceDraftName(activeWorkspace.name)
+      setIsRenamingWorkspace(false)
+      return
+    }
+
+    if (trimmed !== activeWorkspace.name) {
+      void renameWorkspace(activeWorkspace.id, trimmed)
+    }
+
+    setIsRenamingWorkspace(false)
+  }
+
+  return (
+    <ToolShell className="bg-background">
+      <ToolBody className="flex min-h-0 flex-1 gap-0 overflow-hidden p-0">
+        {!isHydrated || isHydrating ? (
+          <div className="flex flex-1 items-center justify-center px-6">
+            <div className="max-w-md rounded-[1.5rem] border border-border/70 bg-card/90 p-8 text-center shadow-[0_24px_60px_rgba(0,0,0,0.08)]">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-[1rem] border border-border/70 bg-background/70">
+                <Sparkles className="h-6 w-6 text-foreground/78" />
+              </div>
+              <h2 className="text-lg font-semibold tracking-tight text-foreground">Preparing Canvas Lab</h2>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Loading your local workspace, graph, artifacts, and compose-stage assets.
+              </p>
+            </div>
+          </div>
+        ) : hydrationError ? (
+          <div className="flex flex-1 items-center justify-center px-6">
+            <div className="max-w-md rounded-[1.5rem] border border-destructive/30 bg-card/90 p-8 text-center shadow-[0_24px_60px_rgba(0,0,0,0.08)]">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-[1rem] border border-destructive/25 bg-destructive/10">
+                <Boxes className="h-6 w-6 text-destructive" />
+              </div>
+              <h2 className="text-lg font-semibold tracking-tight text-foreground">Canvas Lab could not load</h2>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">{hydrationError}</p>
+            </div>
+          </div>
+        ) : (
+          <CanvasLabErrorBoundary>
+            <div className="relative flex min-h-0 flex-1 overflow-hidden">
+              <div className="pointer-events-none absolute right-4 top-4 z-20">
+                <div className="pointer-events-auto flex items-center rounded-full border border-border/65 bg-background/80 pr-1 shadow-[0_18px_42px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+                  <div className="flex w-[14rem] items-center pl-4">
+                    {isRenamingWorkspace ? (
+                      <Input
+                        ref={workspaceInputRef}
+                        value={workspaceDraftName}
+                        onChange={(event) => setWorkspaceDraftName(event.target.value)}
+                        onBlur={commitWorkspaceRename}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            commitWorkspaceRename()
+                          }
+                          if (event.key === 'Escape') {
+                            setWorkspaceDraftName(activeWorkspace?.name || 'Canvas Lab')
+                            setIsRenamingWorkspace(false)
+                          }
+                        }}
+                        className="h-9 border-0 bg-transparent px-0 text-sm font-medium text-foreground shadow-none focus-visible:ring-0"
+                      />
+                    ) : (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex h-10 w-full items-center gap-3 rounded-full pr-2 text-left text-foreground transition-colors hover:bg-background/45"
+                            aria-label="Choose workspace"
+                            title="Double-click the name to rename"
+                            onDoubleClick={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              setWorkspaceDraftName(activeWorkspace?.name || 'Canvas Lab')
+                              setIsRenamingWorkspace(true)
+                            }}
+                          >
+                            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                              {activeWorkspace?.name || 'Canvas Lab'}
+                            </span>
+                            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          align="end"
+                          sideOffset={4}
+                          className="w-[14rem] rounded-[1rem] border-border/70 bg-card/95 p-1"
+                        >
+                          {workspaces.map((workspace) => (
+                            <DropdownMenuItem
+                              key={workspace.id}
+                              className="flex items-center justify-between rounded-[0.8rem] px-3 py-2.5"
+                              onClick={() => setActiveWorkspaceId(workspace.id)}
+                            >
+                              <span className="truncate">{workspace.name}</span>
+                              {workspace.id === activeWorkspaceId ? (
+                                <Check className="h-4 w-4 shrink-0 text-foreground" />
+                              ) : null}
+                            </DropdownMenuItem>
+                          ))}
+                          <DropdownMenuSeparator className="mx-0 my-1" />
+                          <DropdownMenuItem
+                            disabled={workspaces.length <= 1 || !activeWorkspace}
+                            className="rounded-[0.8rem] px-3 py-2.5 text-destructive focus:text-destructive"
+                            onClick={() => {
+                              if (activeWorkspace && workspaces.length > 1) {
+                                void deleteWorkspace(activeWorkspace.id)
+                              }
+                            }}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete Canvas
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+                  <div className="mx-1 h-5 w-px bg-border/65" />
+                  <button
+                    type="button"
+                    className="flex h-10 w-10 items-center justify-center rounded-full text-foreground transition-colors hover:bg-background/60"
+                    onClick={() => {
+                      void createWorkspace()
+                    }}
+                    aria-label="New workspace"
+                    title="New workspace"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+              <ReactFlowProvider>
+                <CanvasFlowSurface />
+              </ReactFlowProvider>
+            </div>
+            <ComposeStage
+              nodeId={openComposeNodeId}
+              isOpen={Boolean(openComposeNodeId)}
+              onClose={() => setOpenComposeNodeId(null)}
+            />
+          </CanvasLabErrorBoundary>
+        )}
+      </ToolBody>
+    </ToolShell>
+  )
+}

@@ -12,6 +12,7 @@ import ChatPage from './chat/ChatPage'
 import { useAppShell } from './components/layout/AppShellContext'
 import { useChatStore } from './stores/chatStore'
 import CommentRepliesTool from './tools/comments/CommentRepliesTool'
+import CanvasLabTool from './tools/canvas-lab/CanvasLabTool'
 import ImageGenerationTool from './tools/images/ImageGenerationTool'
 import PackagingTool from './tools/packaging/PackagingTool'
 import VideoScriptTool from './tools/script/VideoScriptTool'
@@ -80,6 +81,7 @@ export default function Router() {
           <Route path="images" element={<ImageGenerationTool />} />
           <Route path="comments" element={<CommentRepliesTool />} />
           <Route path="script" element={<VideoScriptTool />} />
+          <Route path="canvas-lab" element={<CanvasLabTool />} />
           <Route path="chat" element={<ChatRoute />} />
           <Route path="chat/:chatId" element={<ChatRoute />} />
           <Route path="*" element={<Navigate to="/" replace />} />

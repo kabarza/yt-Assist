@@ -2,12 +2,14 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  type PointerEvent as ReactPointerEvent,
   useRef,
   useState,
   type ChangeEvent,
   type ClipboardEvent,
   type DragEvent,
 } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import {
   CheckCircle2,
@@ -18,6 +20,8 @@ import {
   Clock3,
   Copy,
   Download,
+  GripHorizontal,
+  Info,
   Loader2,
   Pause,
   Pencil,
@@ -41,6 +45,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -53,6 +59,7 @@ import {
 } from '@/components/ui/select'
 import { ToolBody, ToolContainer, ToolHeader, ToolShell } from '@/components/layout/ToolShell'
 import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { requestGeneratedImages } from '@/utils/imageApiClient'
 import { showBackgroundTaskCompletionToast } from '@/utils/taskCompletionToast'
 import { useImageGenerationStore } from '@/stores/imageGenerationStore'
@@ -91,6 +98,10 @@ const gridMinWidthByZoom: Record<ImageGridZoom, number> = {
   detail: 320,
 }
 
+const COMPACT_COMPOSER_DEFAULT_PROMPT_HEIGHT = 160
+const COMPACT_COMPOSER_MIN_PROMPT_HEIGHT = 120
+const COMPACT_COMPOSER_MAX_PROMPT_HEIGHT = 360
+
 interface ViewerSelection {
   turnId: string
   assetId: string
@@ -103,6 +114,12 @@ interface TurnViewerItem {
   asset: ImageAsset
   kind: 'reference' | 'result'
   position: number
+}
+
+interface ComposerContextMeta {
+  title: string
+  detail?: string
+  description: string
 }
 
 type ImageDownloadVariant = 'original' | 'png' | 'jpeg-100' | 'jpeg-80' | 'jpeg-60'
@@ -433,13 +450,44 @@ function isDraftDirty(draft: ImageDraft) {
   )
 }
 
+function getComposerContextMeta(
+  draft: ImageDraft,
+  activePipeline: ImagePipeline | null,
+): ComposerContextMeta | null {
+  if (activePipeline) {
+    return {
+      title: 'Pipeline active',
+      detail: activePipeline.name,
+      description: `Saved prompt, settings, and ${activePipeline.pinnedAssetIds.length} pinned reference${activePipeline.pinnedAssetIds.length === 1 ? '' : 's'}. New images only affect the next run unless you update the pipeline.`,
+    }
+  }
+
+  if (draft.origin === 'edit') {
+    return {
+      title: 'Editing result',
+      description: 'This submission will be appended as a new turn in the same thread.',
+    }
+  }
+
+  if (draft.origin !== 'new' || draft.sourceTurnId) {
+    return {
+      title: 'Another version',
+      description: 'This submission will be appended as a new turn in the same thread.',
+    }
+  }
+
+  return null
+}
+
 export default function ImageGenerationTool() {
+  const [searchParams] = useSearchParams()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const libraryFileInputRef = useRef<HTMLInputElement>(null)
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null)
   const drawingCanvasRef = useRef<DrawingCanvasRef>(null)
   const threadScrollRef = useRef<HTMLDivElement>(null)
   const composerOverlayRef = useRef<HTMLDivElement>(null)
+  const promptResizeStateRef = useRef<{ startY: number; startHeight: number } | null>(null)
   const workerBusyRef = useRef(false)
   const runningTurnIdRef = useRef<string | null>(null)
   const currentAbortControllerRef = useRef<AbortController | null>(null)
@@ -495,11 +543,14 @@ export default function ImageGenerationTool() {
   const [isDrawingDialogOpen, setIsDrawingDialogOpen] = useState(false)
   const [isLibraryDialogOpen, setIsLibraryDialogOpen] = useState(false)
   const [isPipelineDialogOpen, setIsPipelineDialogOpen] = useState(false)
+  const [compactPromptHeight, setCompactPromptHeight] = useState(COMPACT_COMPOSER_DEFAULT_PROMPT_HEIGHT)
   const [selectedLibraryAssetIds, setSelectedLibraryAssetIds] = useState<string[]>([])
   const [newPipelineName, setNewPipelineName] = useState('')
   const [pendingPipelineToApply, setPendingPipelineToApply] = useState<string | null>(null)
   const [pipelinePendingDelete, setPipelinePendingDelete] = useState<ImagePipeline | null>(null)
   const [libraryAssetPendingDelete, setLibraryAssetPendingDelete] = useState<ImageAsset | null>(null)
+
+  const isCompactComposer = searchParams.get('composer') === 'compact'
 
   useEffect(() => {
     void hydrate()
@@ -570,6 +621,10 @@ export default function ImageGenerationTool() {
   )
   const referenceUsageLabel = `${draft.referenceAssetIds.length}/${MAX_IMAGE_REFERENCE_COUNT} refs`
   const isComposerDirty = useMemo(() => isDraftDirty(draft), [draft])
+  const composerContext = useMemo(
+    () => getComposerContextMeta(draft, activePipeline),
+    [activePipeline, draft]
+  )
 
   const tailSignature = useMemo(() => {
     const lastTurn = turns[turns.length - 1]
@@ -724,6 +779,43 @@ export default function ImageGenerationTool() {
     })
   }, [])
 
+  const handlePromptResizeMove = useCallback((event: PointerEvent) => {
+    const resizeState = promptResizeStateRef.current
+    if (!resizeState) return
+
+    const nextHeight = Math.max(
+      COMPACT_COMPOSER_MIN_PROMPT_HEIGHT,
+      Math.min(
+        COMPACT_COMPOSER_MAX_PROMPT_HEIGHT,
+        resizeState.startHeight + (resizeState.startY - event.clientY)
+      )
+    )
+
+    setCompactPromptHeight((current) => (current === nextHeight ? current : nextHeight))
+  }, [])
+
+  const stopPromptResize = useCallback(() => {
+    promptResizeStateRef.current = null
+    window.removeEventListener('pointermove', handlePromptResizeMove)
+    window.removeEventListener('pointerup', stopPromptResize)
+    window.removeEventListener('pointercancel', stopPromptResize)
+  }, [handlePromptResizeMove])
+
+  const handlePromptResizePointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!isCompactComposer) return
+
+    event.preventDefault()
+
+    promptResizeStateRef.current = {
+      startY: event.clientY,
+      startHeight: compactPromptHeight,
+    }
+
+    window.addEventListener('pointermove', handlePromptResizeMove)
+    window.addEventListener('pointerup', stopPromptResize)
+    window.addEventListener('pointercancel', stopPromptResize)
+  }, [compactPromptHeight, handlePromptResizeMove, isCompactComposer, stopPromptResize])
+
   const handleDrawingDialogOpenChange = useCallback((open: boolean) => {
     setIsDrawingDialogOpen(open)
 
@@ -787,6 +879,12 @@ export default function ImageGenerationTool() {
     window.addEventListener('keydown', handleWindowKeyDown)
     return () => window.removeEventListener('keydown', handleWindowKeyDown)
   }, [handleSelectNextViewerItem, handleSelectPreviousViewerItem, selectedViewerItem])
+
+  useEffect(() => {
+    return () => {
+      stopPromptResize()
+    }
+  }, [stopPromptResize])
 
   useEffect(() => {
     const overlay = composerOverlayRef.current
@@ -1503,233 +1601,537 @@ export default function ImageGenerationTool() {
               ref={composerOverlayRef}
               className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:px-6"
             >
-              <div className="pointer-events-auto mx-auto w-full max-w-[58rem]">
+              <div className="pointer-events-auto mx-auto w-fit max-w-full">
                 <div className="pt-1">
                   <div
                     className="overflow-hidden rounded-[1.45rem] border border-border/70 bg-background/96 shadow-[0_10px_30px_hsl(var(--background)/0.45)] backdrop-blur-sm transition-[border-color,box-shadow] duration-200 focus-within:border-ring/40"
                     onDrop={handleComposerDrop}
                     onDragOver={(event) => event.preventDefault()}
                   >
-                    {activePipeline ? (
-                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/16 px-4 py-2.5">
-                        <div>
-                          <p className="text-sm font-medium text-foreground">
-                            Pipeline active: {activePipeline.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Saved prompt, settings, and {activePipeline.pinnedAssetIds.length} pinned reference{activePipeline.pinnedAssetIds.length === 1 ? '' : 's'}. New images only affect the next run unless you update the pipeline.
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              void handleUpdateActivePipeline()
-                            }}
-                          >
-                            Update pipeline
-                          </Button>
-                          <Button type="button" size="sm" variant="ghost" onClick={() => setIsPipelineDialogOpen(true)}>
-                            Manage
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              void resetDraft()
-                            }}
-                          >
-                            <X className="h-4 w-4" />
-                            Clear draft
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (draft.origin !== 'new' || draft.sourceTurnId) ? (
-                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/16 px-4 py-2.5">
-                        <div>
-                          <p className="text-sm font-medium text-foreground">
-                            {draft.origin === 'edit' ? 'Editing from a previous result' : 'Creating another version'}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            This submission will be appended as a new turn in the same thread.
-                          </p>
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            void resetDraft()
-                          }}
-                        >
-                          <X className="h-4 w-4" />
-                          Clear draft
-                        </Button>
-                      </div>
-                    ) : null}
+                    {isCompactComposer ? (
+                      <TooltipProvider delayDuration={120}>
+                        <div className="border-b border-border/60 bg-muted/12 px-4 py-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              {composerContext ? (
+                                <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-xs sm:text-sm">
+                                  <span className="font-medium text-foreground">{composerContext.title}</span>
+                                  {composerContext.detail ? (
+                                    <span className="max-w-[13rem] truncate text-muted-foreground">
+                                      {composerContext.detail}
+                                    </span>
+                                  ) : null}
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <button
+                                        type="button"
+                                        className="rounded-full text-muted-foreground transition-colors hover:text-foreground"
+                                        aria-label="About this draft mode"
+                                      >
+                                        <Info className="h-3.5 w-3.5" />
+                                      </button>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-[18rem] leading-5">
+                                      {composerContext.description}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </div>
+                              ) : (
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                                  Reference inputs
+                                </p>
+                              )}
 
-                    {draftReferenceAssets.length > 0 ? (
-                      <div className="flex flex-wrap gap-3 px-4 pt-4">
-                        {draftReferenceAssets.map((asset, index) => (
-                          <div key={asset.id} className="group relative overflow-hidden rounded-2xl border border-border/70 bg-muted/30 p-1.5">
-                            <div className="absolute left-2 top-2 z-10 flex flex-wrap gap-1">
-                              {activePipelinePinnedAssetIds.has(asset.id) ? (
-                                <Badge variant="secondary" className="px-2 py-0.5 text-[10px]">
-                                  Pipeline
-                                </Badge>
+                              <Badge variant="outline" className="rounded-full px-3 py-1.5">
+                                {referenceUsageLabel}
+                              </Badge>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-9 rounded-full bg-background/80 px-3.5"
+                                  >
+                                    <Upload className="h-4 w-4" />
+                                    Add reference
+                                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-52">
+                                  <DropdownMenuLabel>Reference sources</DropdownMenuLabel>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
+                                    Upload new
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => setIsDrawingDialogOpen(true)}>
+                                    Draw reference
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => setIsLibraryDialogOpen(true)}>
+                                    Add from library
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+
+                              {activePipeline ? (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-9 rounded-full px-3.5"
+                                    >
+                                      Pipeline
+                                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-56">
+                                    <DropdownMenuLabel>{activePipeline.name}</DropdownMenuLabel>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onClick={() => {
+                                      void handleUpdateActivePipeline()
+                                    }}>
+                                      Update from current draft
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => setIsPipelineDialogOpen(true)}>
+                                      Manage pipelines
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
                               ) : null}
-                              {asset.isReusable && !activePipelinePinnedAssetIds.has(asset.id) ? (
-                                <Badge variant="outline" className="bg-background/90 px-2 py-0.5 text-[10px]">
-                                  Library
-                                </Badge>
+
+                              {isComposerDirty ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-9 rounded-full px-3"
+                                      onClick={() => {
+                                        void resetDraft()
+                                      }}
+                                    >
+                                      <X className="h-4 w-4" />
+                                      Clear
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    Reset the prompt, references, and draft mode.
+                                  </TooltipContent>
+                                </Tooltip>
                               ) : null}
                             </div>
-                            <img
-                              src={asset.url}
-                              alt={asset.name || 'Draft reference'}
-                              className="block h-auto max-h-28 w-auto max-w-[8rem] rounded-[0.9rem]"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => void removeDraftReference(asset.id)}
-                              className="absolute right-1.5 top-1.5 rounded-full bg-background/90 p-1 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
-                              aria-label={`Remove reference ${index + 1}`}
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
                           </div>
-                        ))}
-                      </div>
-                    ) : null}
 
-                    <div className="px-4 py-3">
-                      <label htmlFor="image-gen-composer" className="sr-only">Image prompt</label>
-                      <Textarea
-                        id="image-gen-composer"
-                        ref={composerTextareaRef}
-                        value={draft.prompt}
-                        onChange={(event) => {
-                          void setDraftPrompt(event.target.value)
-                        }}
-                        onPaste={(event) => {
-                          void handleComposerPaste(event)
-                        }}
-                        placeholder="Describe the image you want. Add references below for edits, consistency, or style transfer."
-                        className="min-h-24 resize-none border-0 bg-transparent px-0 py-0 text-[15px] leading-6 focus-visible:ring-0"
-                      />
-                    </div>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => {
+                              void handleFileSelect(event)
+                            }}
+                          />
+                        </div>
 
-                    <div className="flex flex-wrap items-end gap-2 px-4 pb-3 pt-1 md:flex-nowrap">
-                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                        <Button type="button" variant="ghost" size="sm" className="h-9 shrink-0 rounded-[0.85rem]" onClick={() => fileInputRef.current?.click()}>
-                          <Upload className="h-4 w-4" />
-                          Upload new
-                        </Button>
-                        <input
-                          ref={fileInputRef}
-                          type="file"
-                          accept="image/*"
-                          multiple
-                          className="hidden"
-                          onChange={(event) => {
-                            void handleFileSelect(event)
-                          }}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-9 shrink-0 rounded-[0.85rem]"
-                          onClick={() => setIsDrawingDialogOpen(true)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                          Draw
-                        </Button>
-                        <Button type="button" variant="ghost" size="sm" className="h-9 shrink-0 rounded-[0.85rem]" onClick={() => setIsLibraryDialogOpen(true)}>
-                          Add from library
-                        </Button>
+                        {draftReferenceAssets.length > 0 ? (
+                          <div className="border-b border-border/60 px-4 py-3">
+                            <div className="-mx-1 overflow-x-auto px-1 pb-1">
+                              <div className="flex w-max items-center gap-3">
+                                {draftReferenceAssets.map((asset, index) => (
+                                  <div
+                                    key={asset.id}
+                                    className="group relative w-[8.75rem] shrink-0 overflow-hidden rounded-[1.1rem] border border-border/70 bg-muted/30 p-1.5"
+                                  >
+                                    <div className="absolute left-2 top-2 z-10 flex flex-wrap gap-1">
+                                      {activePipelinePinnedAssetIds.has(asset.id) ? (
+                                        <Badge variant="secondary" className="px-2 py-0.5 text-[10px]">
+                                          Pipeline
+                                        </Badge>
+                                      ) : null}
+                                      {asset.isReusable && !activePipelinePinnedAssetIds.has(asset.id) ? (
+                                        <Badge variant="outline" className="bg-background/90 px-2 py-0.5 text-[10px]">
+                                          Library
+                                        </Badge>
+                                      ) : null}
+                                    </div>
 
-                        <Select value={draft.model} onValueChange={(value) => { void setDraftModel(value as ImageGenerationModel) }}>
-                          <SelectTrigger className="h-9 min-w-[10.5rem] flex-1 basis-[11rem] rounded-[0.85rem] bg-background/70 sm:max-w-[11rem] sm:flex-none">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {IMAGE_GENERATION_MODELS.map((entry) => (
-                              <SelectItem key={entry.id} value={entry.id}>
-                                {entry.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                                    <button
+                                      type="button"
+                                      onClick={() => void removeDraftReference(asset.id)}
+                                      className="absolute right-1.5 top-1.5 rounded-full bg-background/90 p-1 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
+                                      aria-label={`Remove reference ${index + 1}`}
+                                    >
+                                      <X className="h-3.5 w-3.5" />
+                                    </button>
 
-                        <Select value={String(draft.count)} onValueChange={(value) => { void setDraftCount(Number(value)) }}>
-                          <SelectTrigger className="h-9 w-[7.25rem] shrink-0 rounded-[0.85rem] bg-background/70">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {IMAGE_COUNT_OPTIONS.map((value) => (
-                              <SelectItem key={value} value={String(value)}>
-                                {value} image{value > 1 ? 's' : ''}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                                    <div className="flex h-24 items-center justify-center rounded-[0.85rem] bg-background/70 p-1">
+                                      <img
+                                        src={asset.url}
+                                        alt={asset.name || 'Draft reference'}
+                                        className="max-h-full max-w-full rounded-[0.65rem] object-contain"
+                                      />
+                                    </div>
 
-                        <Select value={draft.aspectRatio} onValueChange={(value) => { void setDraftAspectRatio(value as ImageAspectRatio) }}>
-                          <SelectTrigger className="h-9 w-[4.9rem] shrink-0 rounded-[0.85rem] bg-background/70">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {IMAGE_ASPECT_RATIO_OPTIONS.map((value) => (
-                              <SelectItem key={value} value={value}>
-                                {value}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-
-                        <Select value={draft.imageSize} onValueChange={(value) => { void setDraftImageSize(value as ImageSize) }}>
-                          <SelectTrigger className="h-9 w-[4.35rem] shrink-0 rounded-[0.85rem] bg-background/70">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {IMAGE_SIZE_OPTIONS.map((value) => (
-                              <SelectItem key={value} value={value}>
-                                {value}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="ml-auto flex shrink-0 flex-col items-start gap-1 md:items-end">
-                        <p className="text-xs text-muted-foreground">{referenceUsageLabel}</p>
-                        <Button
-                          type="button"
-                          onClick={() => {
-                            void handleEnqueue()
-                          }}
-                          disabled={!isHydrated || !draft.prompt.trim()}
-                          className="h-9 min-w-[11.25rem] rounded-[0.85rem]"
-                        >
-                          {runningTurn ? <Sparkles className="h-4 w-4" /> : <WandSparkles className="h-4 w-4" />}
-                          {runningTurn || queuePaused ? 'Add to queue' : 'Generate'}
-                        </Button>
-                        {runningTurn ? (
-                          <button
-                            type="button"
-                            onClick={handleCancelCurrent}
-                            className="inline-flex h-7 items-center gap-1.5 rounded-[0.75rem] px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-                          >
-                            <Square className="h-3 w-3 fill-current" />
-                            Cancel current
-                          </button>
+                                    <p className="truncate px-2 pb-1 pt-1.5 text-[11px] font-medium text-foreground/90">
+                                      {asset.name || `Reference ${index + 1}`}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
                         ) : null}
-                      </div>
-                    </div>
+
+                        <div className="px-4 pb-3 pt-3">
+                          <div className="flex justify-center pb-2">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  onPointerDown={handlePromptResizePointerDown}
+                                  className="inline-flex h-6 w-16 cursor-ns-resize items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground"
+                                  aria-label="Resize prompt area"
+                                  style={{ touchAction: 'none' }}
+                                >
+                                  <GripHorizontal className="h-4 w-4" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                Drag up to make more room for long prompts.
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
+
+                          <label htmlFor="image-gen-composer" className="sr-only">Image prompt</label>
+                          <Textarea
+                            id="image-gen-composer"
+                            ref={composerTextareaRef}
+                            value={draft.prompt}
+                            onChange={(event) => {
+                              void setDraftPrompt(event.target.value)
+                            }}
+                            onPaste={(event) => {
+                              void handleComposerPaste(event)
+                            }}
+                            placeholder="Describe the image you want. Add references from the toolbar above, or paste an image directly here."
+                            style={{ height: `${compactPromptHeight}px` }}
+                            className="h-auto min-h-0 resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-[15px] leading-6 focus-visible:ring-0"
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap items-end gap-3 border-t border-border/60 px-4 pb-3 pt-2 md:flex-nowrap">
+                          <div className="min-w-0 flex-1 overflow-x-auto pb-1 md:pb-0">
+                            <div className="flex min-w-max items-center gap-2">
+                              <Select value={draft.model} onValueChange={(value) => { void setDraftModel(value as ImageGenerationModel) }}>
+                                <SelectTrigger className="h-9 min-w-[10.5rem] rounded-[0.85rem] bg-background/70">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {IMAGE_GENERATION_MODELS.map((entry) => (
+                                    <SelectItem key={entry.id} value={entry.id}>
+                                      {entry.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+
+                              <Select value={String(draft.count)} onValueChange={(value) => { void setDraftCount(Number(value)) }}>
+                                <SelectTrigger className="h-9 w-[7.25rem] shrink-0 rounded-[0.85rem] bg-background/70">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {IMAGE_COUNT_OPTIONS.map((value) => (
+                                    <SelectItem key={value} value={String(value)}>
+                                      {value} image{value > 1 ? 's' : ''}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+
+                              <Select value={draft.aspectRatio} onValueChange={(value) => { void setDraftAspectRatio(value as ImageAspectRatio) }}>
+                                <SelectTrigger className="h-9 w-[4.9rem] shrink-0 rounded-[0.85rem] bg-background/70">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {IMAGE_ASPECT_RATIO_OPTIONS.map((value) => (
+                                    <SelectItem key={value} value={value}>
+                                      {value}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+
+                              <Select value={draft.imageSize} onValueChange={(value) => { void setDraftImageSize(value as ImageSize) }}>
+                                <SelectTrigger className="h-9 w-[4.35rem] shrink-0 rounded-[0.85rem] bg-background/70">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {IMAGE_SIZE_OPTIONS.map((value) => (
+                                    <SelectItem key={value} value={value}>
+                                      {value}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+
+                          <div className="ml-auto flex shrink-0 flex-col items-start gap-1 md:items-end">
+                            <Button
+                              type="button"
+                              onClick={() => {
+                                void handleEnqueue()
+                              }}
+                              disabled={!isHydrated || !draft.prompt.trim()}
+                              className="h-10 min-w-[11.25rem] rounded-full px-5"
+                            >
+                              {runningTurn ? <Sparkles className="h-4 w-4" /> : <WandSparkles className="h-4 w-4" />}
+                              {runningTurn || queuePaused ? 'Add to queue' : 'Generate'}
+                            </Button>
+                            {runningTurn ? (
+                              <button
+                                type="button"
+                                onClick={handleCancelCurrent}
+                                className="inline-flex h-7 items-center gap-1.5 rounded-[0.75rem] px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                              >
+                                <Square className="h-3 w-3 fill-current" />
+                                Cancel current
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </TooltipProvider>
+                    ) : (
+                      <>
+                        {activePipeline ? (
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/16 px-4 py-2.5">
+                            <div>
+                              <p className="text-sm font-medium text-foreground">
+                                Pipeline active: {activePipeline.name}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Saved prompt, settings, and {activePipeline.pinnedAssetIds.length} pinned reference{activePipeline.pinnedAssetIds.length === 1 ? '' : 's'}. New images only affect the next run unless you update the pipeline.
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  void handleUpdateActivePipeline()
+                                }}
+                              >
+                                Update pipeline
+                              </Button>
+                              <Button type="button" size="sm" variant="ghost" onClick={() => setIsPipelineDialogOpen(true)}>
+                                Manage
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  void resetDraft()
+                                }}
+                              >
+                                <X className="h-4 w-4" />
+                                Clear draft
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (draft.origin !== 'new' || draft.sourceTurnId) ? (
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/16 px-4 py-2.5">
+                            <div>
+                              <p className="text-sm font-medium text-foreground">
+                                {draft.origin === 'edit' ? 'Editing from a previous result' : 'Creating another version'}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                This submission will be appended as a new turn in the same thread.
+                              </p>
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                void resetDraft()
+                              }}
+                            >
+                              <X className="h-4 w-4" />
+                              Clear draft
+                            </Button>
+                          </div>
+                        ) : null}
+
+                        {draftReferenceAssets.length > 0 ? (
+                          <div className="flex flex-wrap gap-3 px-4 pt-4">
+                            {draftReferenceAssets.map((asset, index) => (
+                              <div key={asset.id} className="group relative overflow-hidden rounded-2xl border border-border/70 bg-muted/30 p-1.5">
+                                <div className="absolute left-2 top-2 z-10 flex flex-wrap gap-1">
+                                  {activePipelinePinnedAssetIds.has(asset.id) ? (
+                                    <Badge variant="secondary" className="px-2 py-0.5 text-[10px]">
+                                      Pipeline
+                                    </Badge>
+                                  ) : null}
+                                  {asset.isReusable && !activePipelinePinnedAssetIds.has(asset.id) ? (
+                                    <Badge variant="outline" className="bg-background/90 px-2 py-0.5 text-[10px]">
+                                      Library
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                <img
+                                  src={asset.url}
+                                  alt={asset.name || 'Draft reference'}
+                                  className="block h-auto max-h-28 w-auto max-w-[8rem] rounded-[0.9rem]"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => void removeDraftReference(asset.id)}
+                                  className="absolute right-1.5 top-1.5 rounded-full bg-background/90 p-1 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
+                                  aria-label={`Remove reference ${index + 1}`}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        <div className="px-4 py-3">
+                          <label htmlFor="image-gen-composer" className="sr-only">Image prompt</label>
+                          <Textarea
+                            id="image-gen-composer"
+                            ref={composerTextareaRef}
+                            value={draft.prompt}
+                            onChange={(event) => {
+                              void setDraftPrompt(event.target.value)
+                            }}
+                            onPaste={(event) => {
+                              void handleComposerPaste(event)
+                            }}
+                            placeholder="Describe the image you want. Add references below for edits, consistency, or style transfer."
+                            className="min-h-24 resize-none border-0 bg-transparent px-0 py-0 text-[15px] leading-6 focus-visible:ring-0"
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap items-end gap-2 px-4 pb-3 pt-1 md:flex-nowrap">
+                          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                            <Button type="button" variant="ghost" size="sm" className="h-9 shrink-0 rounded-[0.85rem]" onClick={() => fileInputRef.current?.click()}>
+                              <Upload className="h-4 w-4" />
+                              Upload new
+                            </Button>
+                            <input
+                              ref={fileInputRef}
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              className="hidden"
+                              onChange={(event) => {
+                                void handleFileSelect(event)
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-9 shrink-0 rounded-[0.85rem]"
+                              onClick={() => setIsDrawingDialogOpen(true)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                              Draw
+                            </Button>
+                            <Button type="button" variant="ghost" size="sm" className="h-9 shrink-0 rounded-[0.85rem]" onClick={() => setIsLibraryDialogOpen(true)}>
+                              Add from library
+                            </Button>
+
+                            <Select value={draft.model} onValueChange={(value) => { void setDraftModel(value as ImageGenerationModel) }}>
+                              <SelectTrigger className="h-9 min-w-[10.5rem] flex-1 basis-[11rem] rounded-[0.85rem] bg-background/70 sm:max-w-[11rem] sm:flex-none">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {IMAGE_GENERATION_MODELS.map((entry) => (
+                                  <SelectItem key={entry.id} value={entry.id}>
+                                    {entry.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+
+                            <Select value={String(draft.count)} onValueChange={(value) => { void setDraftCount(Number(value)) }}>
+                              <SelectTrigger className="h-9 w-[7.25rem] shrink-0 rounded-[0.85rem] bg-background/70">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {IMAGE_COUNT_OPTIONS.map((value) => (
+                                  <SelectItem key={value} value={String(value)}>
+                                    {value} image{value > 1 ? 's' : ''}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+
+                            <Select value={draft.aspectRatio} onValueChange={(value) => { void setDraftAspectRatio(value as ImageAspectRatio) }}>
+                              <SelectTrigger className="h-9 w-[4.9rem] shrink-0 rounded-[0.85rem] bg-background/70">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {IMAGE_ASPECT_RATIO_OPTIONS.map((value) => (
+                                  <SelectItem key={value} value={value}>
+                                    {value}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+
+                            <Select value={draft.imageSize} onValueChange={(value) => { void setDraftImageSize(value as ImageSize) }}>
+                              <SelectTrigger className="h-9 w-[4.35rem] shrink-0 rounded-[0.85rem] bg-background/70">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {IMAGE_SIZE_OPTIONS.map((value) => (
+                                  <SelectItem key={value} value={value}>
+                                    {value}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="ml-auto flex shrink-0 flex-col items-start gap-1 md:items-end">
+                            <p className="text-xs text-muted-foreground">{referenceUsageLabel}</p>
+                            <Button
+                              type="button"
+                              onClick={() => {
+                                void handleEnqueue()
+                              }}
+                              disabled={!isHydrated || !draft.prompt.trim()}
+                              className="h-9 min-w-[11.25rem] rounded-[0.85rem]"
+                            >
+                              {runningTurn ? <Sparkles className="h-4 w-4" /> : <WandSparkles className="h-4 w-4" />}
+                              {runningTurn || queuePaused ? 'Add to queue' : 'Generate'}
+                            </Button>
+                            {runningTurn ? (
+                              <button
+                                type="button"
+                                onClick={handleCancelCurrent}
+                                className="inline-flex h-7 items-center gap-1.5 rounded-[0.75rem] px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                              >
+                                <Square className="h-3 w-3 fill-current" />
+                                Cancel current
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

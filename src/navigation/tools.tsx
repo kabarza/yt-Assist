@@ -66,6 +66,20 @@ function ScriptIcon({ className }: { className?: string }) {
   )
 }
 
+function CanvasLabIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M4 5.75A1.75 1.75 0 015.75 4h12.5A1.75 1.75 0 0120 5.75v12.5A1.75 1.75 0 0118.25 20H5.75A1.75 1.75 0 014 18.25V5.75z"
+      />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 8h3v3H8zM13 8h3v3h-3zM8 13h3v3H8zM15.5 13.5L13 16" />
+    </svg>
+  )
+}
+
 export const TOOL_REGISTRY: ToolDefinition[] = [
   {
     id: 'packaging',
@@ -118,6 +132,16 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     panelKind: 'none',
     icon: ScriptIcon,
   },
+  {
+    id: 'canvasLab',
+    label: 'Canvas Lab',
+    shortLabel: 'Canvas',
+    path: '/canvas-lab',
+    description: 'Experimental node canvas for packaging and thumbnail workflows',
+    shortcut: 'mod+6',
+    panelKind: 'none',
+    icon: CanvasLabIcon,
+  },
 ]
 
 export const TOOL_REGISTRY_BY_ID = Object.fromEntries(
@@ -129,6 +153,7 @@ export function getToolById(toolId: ToolId) {
 }
 
 export function getToolByPathname(pathname: string): ToolDefinition {
+  if (pathname.startsWith('/canvas-lab')) return TOOL_REGISTRY_BY_ID.canvasLab
   if (pathname.startsWith('/chat')) return TOOL_REGISTRY_BY_ID.chat
   if (pathname.startsWith('/images')) return TOOL_REGISTRY_BY_ID.images
   if (pathname.startsWith('/comments')) return TOOL_REGISTRY_BY_ID.comments

@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 
-export type ToolId = 'packaging' | 'chat' | 'images' | 'comments' | 'script'
+export type ToolId = 'packaging' | 'chat' | 'images' | 'comments' | 'script' | 'canvasLab'
 
 export type ToolPanelKind = 'none' | 'chat'
 
