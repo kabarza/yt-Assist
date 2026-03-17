@@ -1,7 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { Hono } from 'hono'
 import OpenAI from 'openai'
-import type { CanvasExecuteNodeRequest, CanvasExecuteNodeResponse } from '../../src/types/canvasLab'
+import type {
+  CanvasExecuteNodeRequest,
+  CanvasExecuteNodeResponse,
+  PackagingOutputNodeKind,
+} from '../../src/types/canvasLab'
 
 const canvasRoute = new Hono()
 
@@ -38,7 +42,7 @@ function summarizeArtifacts(body: CanvasExecuteNodeRequest) {
         body.brief.includeName && body.brief.nameForTitles
           ? `Use this name when useful: ${body.brief.nameForTitles}`
           : null,
-        body.brief.additionalContext ? `Additional context: ${body.brief.additionalContext}` : null,
+        body.brief.additionalContext ? `Packaging directions: ${body.brief.additionalContext}` : null,
       ]
         .filter(Boolean)
         .join('\n')}`,
@@ -77,166 +81,293 @@ function summarizeArtifacts(body: CanvasExecuteNodeRequest) {
   return sections.join('\n\n')
 }
 
-function buildSchema(kind: CanvasExecuteNodeRequest['nodeKind'], requestedCount = 1) {
+function normalizePackagingNodeKind(
+  kind: CanvasExecuteNodeRequest['nodeKind'],
+): PackagingOutputNodeKind | 'transcript_source' | 'image_prompt' {
+  if (kind === 'summary') return 'description'
+  if (kind === 'transcript_source' || kind === 'image_prompt') return kind
+  return kind as PackagingOutputNodeKind
+}
+
+function buildOutputPayloadSchema(kind: PackagingOutputNodeKind | 'image_prompt', requestedCount = 1) {
   switch (kind) {
-    case 'titles':
+    case 'core_hook':
       return {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          content: { type: 'string' },
+          items: {
+            type: 'array',
+            minItems: 2,
+            maxItems: 2,
             items: {
-              type: 'array',
-              minItems: requestedCount,
-              maxItems: requestedCount,
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  text: { type: 'string' },
-                  secondaryText: { type: 'string' },
-                  angle: { type: 'string' },
-                },
-                required: ['text', 'secondaryText', 'angle'],
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                text: { type: 'string' },
               },
+              required: ['text'],
             },
           },
-          required: ['items'],
         },
+        required: ['content', 'items'],
+      }
+    case 'description':
+      return {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          items: {
+            type: 'array',
+            minItems: requestedCount,
+            maxItems: requestedCount,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                text: { type: 'string' },
+              },
+              required: ['text'],
+            },
+          },
+        },
+        required: ['items'],
+      }
+    case 'titles':
+      return {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          items: {
+            type: 'array',
+            minItems: requestedCount,
+            maxItems: requestedCount,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                text: { type: 'string' },
+                secondaryText: { type: 'string' },
+                angle: { type: 'string' },
+              },
+              required: ['text', 'secondaryText', 'angle'],
+            },
+          },
+        },
+        required: ['items'],
       }
     case 'thumbnail_copy':
       return {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          items: {
+            type: 'array',
+            minItems: requestedCount,
+            maxItems: requestedCount,
             items: {
-              type: 'array',
-              minItems: requestedCount,
-              maxItems: requestedCount,
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  text: { type: 'string' },
-                  secondaryText: { type: 'string' },
-                },
-                required: ['text', 'secondaryText'],
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                text: { type: 'string' },
+                secondaryText: { type: 'string' },
               },
+              required: ['text', 'secondaryText'],
             },
           },
-          required: ['items'],
         },
+        required: ['items'],
       }
     case 'chapters':
       return {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          items: {
+            type: 'array',
+            minItems: 3,
             items: {
-              type: 'array',
-              minItems: 3,
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  text: { type: 'string' },
-                  secondaryText: { type: 'string' },
-                },
-                required: ['text', 'secondaryText'],
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                text: { type: 'string' },
+                secondaryText: { type: 'string' },
               },
+              required: ['text', 'secondaryText'],
             },
           },
-          required: ['items'],
         },
+        required: ['items'],
       }
-    case 'summary':
+    case 'hashtags':
       return {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            content: { type: 'string' },
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          content: { type: 'string' },
+          items: {
+            type: 'array',
+            minItems: requestedCount,
+            maxItems: requestedCount,
             items: {
-              type: 'array',
-              minItems: 2,
-              maxItems: 4,
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  text: { type: 'string' },
-                },
-                required: ['text'],
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                text: { type: 'string' },
               },
+              required: ['text'],
             },
           },
-          required: ['content', 'items'],
         },
+        required: ['content', 'items'],
       }
     case 'image_prompt':
       return {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            content: { type: 'string' },
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          content: { type: 'string' },
+          items: {
+            type: 'array',
+            minItems: 2,
+            maxItems: 4,
             items: {
-              type: 'array',
-              minItems: 2,
-              maxItems: 4,
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  text: { type: 'string' },
-                },
-                required: ['text'],
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                text: { type: 'string' },
               },
+              required: ['text'],
             },
           },
-          required: ['content', 'items'],
         },
-      }
-    default:
-      return {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            content: { type: 'string' },
-          },
-          required: ['content'],
-        },
+        required: ['content', 'items'],
       }
   }
 }
 
+function buildSchema(kind: PackagingOutputNodeKind | 'transcript_source' | 'image_prompt', body: CanvasExecuteNodeRequest) {
+  if (kind === 'transcript_source') {
+    const selectedOutputs = body.selectedOutputs || {}
+    const selectedKinds = Object.entries(selectedOutputs)
+      .filter(([, selection]) => selection?.enabled)
+      .map(([outputKind]) => outputKind as PackagingOutputNodeKind)
+
+    return {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          outputs: {
+            type: 'object',
+            additionalProperties: false,
+            properties: Object.fromEntries(
+              selectedKinds.map((outputKind) => [
+                outputKind,
+                buildOutputPayloadSchema(outputKind, selectedOutputs[outputKind]?.count || 1),
+              ]),
+            ),
+            required: selectedKinds,
+          },
+        },
+        required: ['outputs'],
+      },
+    }
+  }
+
+  return {
+    schema: buildOutputPayloadSchema(kind, body.requestedCount || 1),
+  }
+}
+
+function buildTranscriptOutputSpecs(body: CanvasExecuteNodeRequest) {
+  const selectedOutputs = body.selectedOutputs || {}
+  const lines: string[] = []
+
+  for (const [kind, selection] of Object.entries(selectedOutputs)) {
+    if (!selection?.enabled) continue
+    switch (kind as PackagingOutputNodeKind) {
+      case 'core_hook':
+        lines.push('- core_hook: exactly 2 lines explaining what the video is really about and why someone should click')
+        break
+      case 'description':
+        lines.push(`- description: exactly ${selection.count} YouTube descriptions, each publish-ready and not robotic`)
+        break
+      case 'titles':
+        lines.push(`- titles: exactly ${selection.count} titles, each with a paired thumbnail-text companion`)
+        break
+      case 'thumbnail_copy':
+        lines.push(`- thumbnail_copy: exactly ${selection.count} extra thumbnail text options, 1-4 words when possible`)
+        break
+      case 'chapters':
+        lines.push(`- chapters: generate around ${selection.count} timestamped chapters in ascending order`)
+        break
+      case 'hashtags':
+        lines.push(`- hashtags: exactly ${selection.count} relevant hashtags, also return a joined copy-ready hashtag line`)
+        break
+    }
+  }
+
+  return lines.join('\n')
+}
+
 function buildPackagingPrompt(body: CanvasExecuteNodeRequest) {
   const requestedCount = body.requestedCount || 1
+  const normalizedKind = normalizePackagingNodeKind(body.nodeKind)
+
+  if (normalizedKind === 'transcript_source') {
+    return `You are generating YouTube packaging outputs from one transcript inside a node-based workspace.
+
+Use the creator packaging context below and return strict JSON only.
+
+Apply these packaging principles:
+- Titles should be click-worthy but not dishonest.
+- Thumbnail copy should complement titles, not repeat them.
+- Descriptions should feel publish-ready and specific.
+- Chapters must use ascending timestamps and concise labels.
+- Hashtags must be relevant and non-spammy.
+- Avoid generic AI wording and filler.
+
+Requested outputs:
+${buildTranscriptOutputSpecs(body)}
+
+${summarizeArtifacts(body)}`
+  }
 
   const taskInstruction =
-    body.nodeKind === 'titles'
+    normalizedKind === 'core_hook'
+      ? 'Write one concise core hook and return exactly 2 lines: what the video is really about, and why someone should click.'
+      : normalizedKind === 'description'
+      ? `Generate exactly ${requestedCount} publish-ready YouTube descriptions.`
+      : normalizedKind === 'titles'
       ? `Generate exactly ${requestedCount} YouTube title ideas. Each item must also include short thumbnail text.`
-      : body.nodeKind === 'thumbnail_copy'
+      : normalizedKind === 'thumbnail_copy'
       ? `Generate exactly ${requestedCount} short thumbnail text ideas. Keep them punchy and 1-4 words when possible.`
-      : body.nodeKind === 'chapters'
+      : normalizedKind === 'chapters'
       ? 'Generate a chapter list with timestamps and chapter titles.'
-      : body.nodeKind === 'summary'
-      ? 'Write one strong YouTube summary plus a few supporting takeaways.'
+      : normalizedKind === 'hashtags'
+      ? `Generate exactly ${requestedCount} relevant hashtags and also return a copy-ready joined hashtag line.`
+      : normalizedKind === 'description'
+      ? `Generate exactly ${requestedCount} publish-ready YouTube descriptions.`
       : 'Write an image prompt for a thumbnail generation model based on the connected context.'
 
   const extraRules =
-    body.nodeKind === 'titles'
+    normalizedKind === 'core_hook'
+      ? 'Keep the core hook concrete and high-signal.'
+      : normalizedKind === 'description'
+      ? 'Descriptions should open strong, feel human, and mention concrete transcript details.'
+      : normalizedKind === 'titles'
       ? 'Titles should feel click-worthy but not spammy. Avoid obvious duplicates.'
-      : body.nodeKind === 'thumbnail_copy'
+      : normalizedKind === 'thumbnail_copy'
       ? 'Do not repeat the title directly. Focus on contrast, curiosity, or outcome.'
-      : body.nodeKind === 'chapters'
+      : normalizedKind === 'chapters'
       ? 'Return timestamps in ascending order and keep titles concise.'
-      : body.nodeKind === 'image_prompt'
+      : normalizedKind === 'hashtags'
+      ? 'Use only relevant tags that would plausibly help discovery.'
+      : normalizedKind === 'image_prompt'
       ? 'The image prompt should be production-ready and specific about composition, lighting, subject focus, and style.'
-      : 'Keep the summary useful and readable.'
+      : 'Keep the output useful and readable.'
 
   return `${taskInstruction}
 
@@ -249,8 +380,10 @@ ${summarizeArtifacts(body)}`
 
 async function runStructuredPackaging(body: CanvasExecuteNodeRequest): Promise<CanvasExecuteNodeResponse> {
   const client = requireOpenAIClient(body)
-  const schema = buildSchema(body.nodeKind, body.requestedCount)
+  const normalizedKind = normalizePackagingNodeKind(body.nodeKind)
+  const schema = buildSchema(normalizedKind, body)
   const model = body.packagingModel?.model || 'gpt-5.2'
+  const requestPreview = buildPackagingPrompt(body)
 
   const response = await client.chat.completions.create({
     model,
@@ -258,17 +391,19 @@ async function runStructuredPackaging(body: CanvasExecuteNodeRequest): Promise<C
       {
         role: 'system',
         content:
-          'You generate structured YouTube packaging outputs for a graph-based creative workspace. Be concise, strategic, and strictly follow the JSON schema.',
+          normalizedKind === 'transcript_source'
+            ? 'You generate structured YouTube packaging outputs for a transcript-first creative workspace. Be strategic and strictly follow the JSON schema.'
+            : 'You generate structured YouTube packaging outputs for a graph-based creative workspace. Be concise, strategic, and strictly follow the JSON schema.',
       },
       {
         role: 'user',
-        content: buildPackagingPrompt(body),
+        content: requestPreview,
       },
     ],
     response_format: {
       type: 'json_schema',
       json_schema: {
-        name: `${body.nodeKind}_node_response`,
+        name: `${normalizedKind}_node_response`,
         schema: schema.schema,
         strict: true,
       },
@@ -277,12 +412,48 @@ async function runStructuredPackaging(body: CanvasExecuteNodeRequest): Promise<C
 
   const content = response.choices[0]?.message?.content || '{}'
   const parsed = JSON.parse(content)
+  const responsePreview = JSON.stringify(parsed, null, 2)
+
+  const normalizeItems = (items: unknown) =>
+    Array.isArray(items)
+      ? items.map((item: Record<string, unknown>) => ({
+          text: typeof item.text === 'string' ? item.text : '',
+          secondaryText: typeof item.secondaryText === 'string' ? item.secondaryText : undefined,
+          meta:
+            typeof item.angle === 'string' && item.angle.trim()
+              ? { angle: item.angle }
+              : undefined,
+        }))
+      : []
+
+  if (normalizedKind === 'transcript_source') {
+    return {
+      provider: 'openai',
+      model,
+      outputs: Object.fromEntries(
+        Object.entries(parsed.outputs || {}).map(([outputKind, value]) => [
+          outputKind,
+          {
+            content:
+              typeof (value as { content?: unknown }).content === 'string'
+                ? (value as { content: string }).content
+                : undefined,
+            items: normalizeItems((value as { items?: unknown }).items),
+          },
+        ]),
+      ),
+      requestPreview,
+      responsePreview,
+    }
+  }
 
   return {
     provider: 'openai',
     model,
     content: typeof parsed.content === 'string' ? parsed.content : undefined,
-    items: Array.isArray(parsed.items) ? parsed.items : [],
+    items: normalizeItems(parsed.items),
+    requestPreview,
+    responsePreview,
   }
 }
 

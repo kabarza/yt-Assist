@@ -4,10 +4,12 @@ import type { ImageAspectRatio, ImageGenerationModel, ImageSize } from '@/types/
 
 export type CanvasLabNodeKind =
   | 'transcript_source'
-  | 'packaging_brief'
+  | 'core_hook'
+  | 'description'
   | 'titles'
   | 'summary'
   | 'chapters'
+  | 'hashtags'
   | 'thumbnail_copy'
   | 'image_prompt'
   | 'image_generate'
@@ -23,9 +25,12 @@ export type ArtifactKind =
   | 'timestamp_map'
   | 'key_hooks'
   | 'brief'
+  | 'core_hook'
+  | 'description'
   | 'title_suggestions'
   | 'summary'
   | 'chapter_list'
+  | 'hashtags'
   | 'thumbnail_copy'
   | 'image_prompt'
   | 'chat_answer'
@@ -65,6 +70,9 @@ export interface NodeRun {
   requestedCount?: number
   warnings?: string[]
   error?: string
+  requestPreview?: string
+  responsePreview?: string
+  sourceRunId?: string
 }
 
 export interface NodeThreadMessage {
@@ -91,6 +99,21 @@ export interface PackagingBriefConfig {
   additionalContext: string
   transcriptIncludeTimestamps: boolean
 }
+
+export type PackagingOutputNodeKind =
+  | 'core_hook'
+  | 'description'
+  | 'titles'
+  | 'thumbnail_copy'
+  | 'chapters'
+  | 'hashtags'
+
+export interface PackagingOutputSelection {
+  enabled: boolean
+  count: number
+}
+
+export type PackagingOutputSelectionMap = Record<PackagingOutputNodeKind, PackagingOutputSelection>
 
 export interface OutputNodeConfig {
   requestedCount: number
@@ -143,14 +166,18 @@ export interface ComposeNodeConfig {
 export interface TranscriptSourceNodeConfig {
   transcript: string
   artifacts: TranscriptArtifacts
+  brief: PackagingBriefConfig
+  selectedOutputs: PackagingOutputSelectionMap
 }
 
 export interface CanvasNodeConfigMap {
   transcript_source: TranscriptSourceNodeConfig
-  packaging_brief: PackagingBriefConfig
+  core_hook: OutputNodeConfig
+  description: OutputNodeConfig
   titles: OutputNodeConfig
   summary: OutputNodeConfig
   chapters: OutputNodeConfig
+  hashtags: OutputNodeConfig
   thumbnail_copy: OutputNodeConfig
   image_prompt: OutputNodeConfig
   image_generate: ImageGenerateNodeConfig
@@ -161,7 +188,6 @@ export interface CanvasNodeConfigMap {
 
 export type CanvasNodeConfig =
   | TranscriptSourceNodeConfig
-  | PackagingBriefConfig
   | OutputNodeConfig
   | ChatNodeConfig
   | ImageGenerateNodeConfig
@@ -229,6 +255,8 @@ export interface CanvasExecuteNodeRequest {
   thread: Array<Pick<NodeThreadMessage, 'role' | 'text'>>
   transcript?: TranscriptArtifacts
   brief?: PackagingBriefConfig
+  selectedOutputs?: PackagingOutputSelectionMap
+  sourceRunId?: string
   artifacts: Array<{
     kind: ArtifactKind
     label: string
@@ -268,6 +296,15 @@ export interface CanvasExecuteNodeRequest {
   }
 }
 
+export interface CanvasExecutionOutputPayload {
+  content?: string
+  items?: Array<{
+    text: string
+    secondaryText?: string
+    meta?: Record<string, string | number | boolean | null>
+  }>
+}
+
 export interface CanvasExecuteNodeResponse {
   provider: 'openai' | 'anthropic' | 'gemini' | 'local'
   model: string
@@ -281,4 +318,7 @@ export interface CanvasExecuteNodeResponse {
     mimeType?: string
     name?: string
   }>
+  outputs?: Partial<Record<PackagingOutputNodeKind, CanvasExecutionOutputPayload>>
+  requestPreview?: string
+  responsePreview?: string
 }

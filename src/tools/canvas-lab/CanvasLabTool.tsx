@@ -7,7 +7,7 @@ import {
   type Connection,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Boxes, Check, ChevronDown, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { Boxes, Check, ChevronDown, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -17,17 +17,41 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { ToolBody, ToolShell } from '@/components/layout/ToolShell'
 import ComposeStage from '@/tools/canvas-lab/ComposeStage'
 import CanvasLabNode from '@/tools/canvas-lab/CanvasLabNode'
 import {
   useActiveCanvasWorkspace,
   useCanvasLabStore,
+  useCanvasNode,
+  useCanvasNodeLatestRun,
+  useCanvasNodeThread,
 } from '@/stores/canvasLabStore'
 
 const nodeTypes = {
   canvasLabNode: CanvasLabNode,
 }
+
+const CANVAS_EDGE_STYLE = {
+  stroke: 'var(--foreground)',
+  strokeWidth: 1.65,
+  opacity: 0.28,
+}
+
+const CANVAS_CONNECTION_LINE_STYLE = {
+  stroke: 'var(--foreground)',
+  strokeWidth: 1.65,
+  opacity: 0.45,
+}
+
+const MANUAL_NODE_OPTIONS = [
+  { kind: 'chat', label: 'Chat' },
+  { kind: 'image_prompt', label: 'Image Prompt' },
+  { kind: 'image_generate', label: 'Image Gen' },
+  { kind: 'asset_library', label: 'Asset Library' },
+  { kind: 'compose', label: 'Compose' },
+] as const
 
 class CanvasLabErrorBoundary extends Component<
   { children: ReactNode },
@@ -106,10 +130,7 @@ function CanvasFlowSurface() {
         source: edge.source,
         target: edge.target,
         type: 'default',
-        style: {
-          stroke: 'hsl(var(--foreground) / 0.3)',
-          strokeWidth: 1.65,
-        },
+        style: CANVAS_EDGE_STYLE,
         pathOptions: {
           curvature: 0.42,
         },
@@ -132,6 +153,7 @@ function CanvasFlowSurface() {
         minZoom={0.35}
         maxZoom={1.6}
         connectionLineType={ConnectionLineType.Bezier}
+        connectionLineStyle={CANVAS_CONNECTION_LINE_STYLE}
         proOptions={{ hideAttribution: true }}
         onNodesChange={(changes) => {
           void applyFlowNodeChanges(changes)
@@ -158,14 +180,93 @@ function CanvasFlowSurface() {
         nodesFocusable
         defaultEdgeOptions={{
           type: 'default',
-          style: {
-            stroke: 'hsl(var(--foreground) / 0.3)',
-            strokeWidth: 1.65,
-          },
+          style: CANVAS_EDGE_STYLE,
         }}
       >
-        <Background color="hsl(var(--border) / 0.7)" gap={22} size={1} />
+        <Background color="var(--border)" gap={22} size={1} />
       </ReactFlow>
+    </div>
+  )
+}
+
+function DebugDrawer({
+  nodeId,
+  onClose,
+}: {
+  nodeId: string | null
+  onClose: () => void
+}) {
+  const node = useCanvasNode(nodeId)
+  const latestRun = useCanvasNodeLatestRun(nodeId)
+  const thread = useCanvasNodeThread(nodeId)
+
+  if (!nodeId || !node || !latestRun || (!latestRun.requestPreview && !latestRun.responsePreview)) {
+    return null
+  }
+
+  return (
+    <div className="pointer-events-auto absolute bottom-4 right-4 top-20 z-30 w-[26rem] overflow-hidden rounded-[1.45rem] border border-border/70 bg-card/96 shadow-[0_26px_70px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+      <div className="flex items-start justify-between gap-4 border-b border-border/70 px-4 py-3">
+        <div className="space-y-1">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            Run Debug
+          </p>
+          <h3 className="text-sm font-semibold text-foreground">{node.label}</h3>
+          <p className="text-xs text-muted-foreground">
+            {latestRun.model}
+            {latestRun.sourceRunId ? ` · source ${latestRun.sourceRunId.slice(-6)}` : ''}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9 rounded-[0.9rem]"
+          onClick={onClose}
+          aria-label="Close debug drawer"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+      <ScrollArea className="h-full max-h-[calc(100%-4.25rem)]">
+        <div className="space-y-5 px-4 py-4">
+          {thread.length > 0 ? (
+            <section className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                Refinement Thread
+              </p>
+              <div className="space-y-2">
+                {thread.slice(-6).map((message) => (
+                  <div key={message.id} className="rounded-[1rem] border border-border/65 bg-background/70 px-3 py-2.5 text-xs leading-5 text-foreground">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      {message.role}
+                    </p>
+                    <p>{message.text}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          <section className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+              Request
+            </p>
+            <pre className="overflow-x-auto rounded-[1rem] border border-border/65 bg-background/75 p-3 text-[11px] leading-5 text-foreground whitespace-pre-wrap">
+              {latestRun.requestPreview || 'No request preview stored.'}
+            </pre>
+          </section>
+
+          <section className="space-y-2 pb-6">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+              Response
+            </p>
+            <pre className="overflow-x-auto rounded-[1rem] border border-border/65 bg-background/75 p-3 text-[11px] leading-5 text-foreground whitespace-pre-wrap">
+              {latestRun.responsePreview || 'No response preview stored.'}
+            </pre>
+          </section>
+        </div>
+      </ScrollArea>
     </div>
   )
 }
@@ -182,8 +283,11 @@ export default function CanvasLabTool() {
   const createWorkspace = useCanvasLabStore((state) => state.createWorkspace)
   const deleteWorkspace = useCanvasLabStore((state) => state.deleteWorkspace)
   const renameWorkspace = useCanvasLabStore((state) => state.renameWorkspace)
+  const addNode = useCanvasLabStore((state) => state.addNode)
   const openComposeNodeId = useCanvasLabStore((state) => state.openComposeNodeId)
   const setOpenComposeNodeId = useCanvasLabStore((state) => state.setOpenComposeNodeId)
+  const openDebugNodeId = useCanvasLabStore((state) => state.openDebugNodeId)
+  const setOpenDebugNodeId = useCanvasLabStore((state) => state.setOpenDebugNodeId)
   const [isRenamingWorkspace, setIsRenamingWorkspace] = useState(false)
   const [workspaceDraftName, setWorkspaceDraftName] = useState('')
   const workspaceInputRef = useRef<HTMLInputElement>(null)
@@ -250,7 +354,37 @@ export default function CanvasLabTool() {
         ) : (
           <CanvasLabErrorBoundary>
             <div className="relative flex min-h-0 flex-1 overflow-hidden">
-              <div className="pointer-events-none absolute right-4 top-4 z-20">
+              <div className="pointer-events-none absolute right-4 top-4 z-20 flex items-center gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="pointer-events-auto h-10 rounded-full border-border/65 bg-background/80 px-3 shadow-[0_18px_42px_rgba(0,0,0,0.22)] backdrop-blur-xl"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Node
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" sideOffset={4} className="w-[14rem] rounded-[1rem] border-border/70 bg-card/95 p-1">
+                    {MANUAL_NODE_OPTIONS.map((option) => {
+                      const exists = activeWorkspace?.nodes.some((node) => node.kind === option.kind)
+                      return (
+                        <DropdownMenuItem
+                          key={option.kind}
+                          disabled={exists}
+                          className="rounded-[0.8rem] px-3 py-2.5"
+                          onClick={() => {
+                            void addNode(option.kind)
+                          }}
+                        >
+                          {option.label}
+                        </DropdownMenuItem>
+                      )
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
                 <div className="pointer-events-auto flex items-center rounded-full border border-border/65 bg-background/80 pr-1 shadow-[0_18px_42px_rgba(0,0,0,0.22)] backdrop-blur-xl">
                   <div className="flex w-[14rem] items-center pl-4">
                     {isRenamingWorkspace ? (
@@ -342,6 +476,10 @@ export default function CanvasLabTool() {
               <ReactFlowProvider>
                 <CanvasFlowSurface />
               </ReactFlowProvider>
+              <DebugDrawer
+                nodeId={openDebugNodeId}
+                onClose={() => setOpenDebugNodeId(null)}
+              />
             </div>
             <ComposeStage
               nodeId={openComposeNodeId}

@@ -1,6 +1,7 @@
 import { useAPIConfigStore } from '../stores/apiConfigStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import type { Citation, ContentPart, Provider } from '../types/chat'
+import { fetchApi } from './fetchApi'
 
 export interface ChatEndpointOverride {
   baseUrl?: string
@@ -199,7 +200,7 @@ async function consumeEventStream(response: Response, handlers: StreamChatHandle
 }
 
 export async function requestChatText(options: ChatRequestOptions): Promise<ChatTextResult> {
-  const response = await fetch(getAPIEndpoint(options.provider), {
+  const response = await fetchApi(getAPIEndpoint(options.provider), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildRequestBody(options, false)),
@@ -221,7 +222,7 @@ export async function streamChatCompletion(
   options: ChatRequestOptions,
   handlers: StreamChatHandlers = {}
 ): Promise<void> {
-  const response = await fetch(getAPIEndpoint(options.provider), {
+  const response = await fetchApi(getAPIEndpoint(options.provider), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildRequestBody(options, true)),

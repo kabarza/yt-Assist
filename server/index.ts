@@ -7,6 +7,7 @@ import { anthropicRoute } from './routes/anthropic'
 import { canvasRoute } from './routes/canvas'
 import { geminiImagesRoute } from './routes/geminiImages'
 import { openaiRoute } from './routes/openai'
+import { thumbnailEditRoute } from './routes/thumbnailEdit'
 import { transcriptRoute } from './routes/transcripts'
 
 const app = new Hono()
@@ -18,6 +19,7 @@ app.use('*', cors())
 app.route('/api/chat/anthropic', anthropicRoute)
 app.route('/api/chat/openai', openaiRoute)
 app.route('/api/images/gemini', geminiImagesRoute)
+app.route('/api/thumbnail/edit', thumbnailEditRoute)
 app.route('/api/transcripts', transcriptRoute)
 app.route('/api/canvas', canvasRoute)
 

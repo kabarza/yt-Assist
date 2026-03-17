@@ -1,8 +1,11 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import {
   ArrowRight,
+  Bug,
   Check,
+  ChevronDown,
+  Copy,
   Loader2,
   Pin,
   Play,
@@ -12,6 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
@@ -20,18 +24,31 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
   useCanvasLabStore,
   useCanvasNode,
   useCanvasNodeArtifacts,
+  useCanvasNodeLatestRun,
   useCanvasNodeThread,
 } from '@/stores/canvasLabStore'
 import { MODELS } from '@/types/chat'
-import type { Artifact, ArtifactItem, CanvasAsset, CanvasNodeConfigMap } from '@/types/canvasLab'
+import type {
+  Artifact,
+  ArtifactItem,
+  CanvasAsset,
+  CanvasNodeConfigMap,
+  PackagingBriefConfig,
+  PackagingOutputNodeKind,
+} from '@/types/canvasLab'
 import { cn } from '@/lib/utils'
 import { IMAGE_ASPECT_RATIO_OPTIONS, IMAGE_GENERATION_MODELS, IMAGE_SIZE_OPTIONS } from '@/types/images'
-import { deriveTranscriptArtifacts } from '@/utils/canvasLabWorkspace'
+import {
+  deriveTranscriptArtifacts,
+  PACKAGING_OUTPUT_NODE_KINDS,
+} from '@/utils/canvasLabWorkspace'
+import { toast } from 'sonner'
 
 const statusClassNames = {
   idle: 'border-border/80 text-muted-foreground',
@@ -39,6 +56,22 @@ const statusClassNames = {
   complete: 'border-emerald-500/35 text-emerald-700 dark:text-emerald-300',
   stale: 'border-blue-500/35 text-blue-700 dark:text-blue-300',
   error: 'border-destructive/40 text-destructive',
+}
+
+const OUTPUT_SELECTION_LABELS: Record<PackagingOutputNodeKind, string> = {
+  core_hook: 'Core Hook',
+  description: 'Description',
+  titles: 'Titles',
+  thumbnail_copy: 'Thumbnail Copy',
+  chapters: 'Chapters',
+  hashtags: 'Hashtags',
+}
+
+function copyTextToClipboard(value: string, label = 'Copied') {
+  const text = value.trim()
+  if (!text) return
+  void navigator.clipboard.writeText(text)
+  toast.success(label)
 }
 
 function itemSummaryText(item: ArtifactItem) {
@@ -49,6 +82,36 @@ function itemSummaryText(item: ArtifactItem) {
   const firstMeta = Object.entries(item.meta || {}).find(([, value]) => value !== null && value !== '')
   if (!firstMeta) return ''
   return `${firstMeta[0]}: ${String(firstMeta[1])}`
+}
+
+function activeGuidanceFieldCount(brief: PackagingBriefConfig) {
+  return [
+    brief.mustInclude.trim(),
+    brief.niceToInclude.trim(),
+    brief.avoidWords.trim(),
+    brief.additionalContext.trim(),
+    brief.includeName && brief.nameForTitles.trim() ? brief.nameForTitles.trim() : '',
+    brief.transcriptIncludeTimestamps ? '' : 'timestamps-off',
+  ].filter(Boolean).length
+}
+
+function guidanceSummaryText(brief: PackagingBriefConfig) {
+  const summary = [
+    brief.mustInclude.trim() ? 'must include set' : null,
+    brief.niceToInclude.trim() ? 'nice-to-include set' : null,
+    brief.avoidWords.trim() ? 'avoid words set' : null,
+    brief.additionalContext.trim() ? 'directions added' : null,
+    brief.includeName && brief.nameForTitles.trim() ? `name: ${brief.nameForTitles.trim()}` : null,
+    brief.transcriptIncludeTimestamps ? null : 'timestamps off',
+  ].filter(Boolean)
+
+  if (summary.length === 0) {
+    return 'No optional guidance yet.'
+  }
+
+  return summary.length > 2
+    ? `${summary.slice(0, 2).join(' · ')} +${summary.length - 2} more`
+    : summary.join(' · ')
 }
 
 function ArtifactItemRow({
@@ -69,7 +132,7 @@ function ArtifactItemRow({
   const composeNodeId = openComposeNodeId || activeWorkspace?.nodes.find((node) => node.kind === 'compose')?.id || null
 
   return (
-    <div className="rounded-[1rem] border border-border/65 bg-background/70 p-3">
+    <div className="group rounded-[1rem] border border-border/65 bg-background/70 p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <p className="text-sm font-medium leading-5 text-foreground">{item.text}</p>
@@ -88,6 +151,16 @@ function ArtifactItemRow({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-[0.8rem] opacity-0 transition-opacity group-hover:opacity-100"
+            onClick={() => copyTextToClipboard(item.text, 'Copied item')}
+            aria-label="Copy item"
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
           <Button
             type="button"
             variant={item.accepted ? 'default' : 'ghost'}
@@ -137,11 +210,13 @@ function NodeHeader({
   status,
   kind,
   onOpenCompose,
+  onOpenDebug,
 }: {
   label: string
   status: string
   kind: string
   onOpenCompose?: () => void
+  onOpenDebug?: () => void
 }) {
   return (
     <div className="flex items-start justify-between gap-3 border-b border-border/60 px-4 py-3">
@@ -161,6 +236,18 @@ function NodeHeader({
         >
           {status}
         </Badge>
+        {onOpenDebug ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 rounded-full px-3"
+            onClick={onOpenDebug}
+          >
+            <Bug className="mr-1.5 h-3.5 w-3.5" />
+            Debug
+          </Button>
+        ) : null}
         {onOpenCompose ? (
           <Button
             type="button"
@@ -183,12 +270,14 @@ function RunFooter({
   onRunTenMore,
   isRunning,
   allowCountButtons = false,
+  primaryLabel = 'Run',
 }: {
   onRun: () => void
   onRunFiveMore?: () => void
   onRunTenMore?: () => void
   isRunning: boolean
   allowCountButtons?: boolean
+  primaryLabel?: string
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 border-t border-border/60 px-4 py-3">
@@ -200,7 +289,7 @@ function RunFooter({
         disabled={isRunning}
       >
         {isRunning ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-2 h-3.5 w-3.5" />}
-        Run
+        {primaryLabel}
       </Button>
       {allowCountButtons && onRunFiveMore ? (
         <Button type="button" variant="outline" size="sm" className="h-8 rounded-full px-3" onClick={onRunFiveMore} disabled={isRunning}>
@@ -216,14 +305,44 @@ function RunFooter({
   )
 }
 
+function CopyableContentBlock({
+  content,
+}: {
+  content: string
+}) {
+  return (
+    <div className="group rounded-[1rem] border border-border/65 bg-background/70 p-3 text-sm leading-6 text-foreground">
+      <div className="mb-2 flex justify-end">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 rounded-[0.8rem] opacity-0 transition-opacity group-hover:opacity-100"
+          onClick={() => copyTextToClipboard(content, 'Copied block')}
+          aria-label="Copy block"
+        >
+          <Copy className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <div className="whitespace-pre-wrap">{content}</div>
+    </div>
+  )
+}
+
 function CanvasLabNodeComponent({ data }: any) {
   const node = useCanvasNode(data.nodeId)
   const artifacts = useCanvasNodeArtifacts(data.nodeId)
+  const latestRun = useCanvasNodeLatestRun(data.nodeId)
   const thread = useCanvasNodeThread(data.nodeId)
   const executeNode = useCanvasLabStore((state) => state.executeNode)
   const updateNodeConfig = useCanvasLabStore((state) => state.updateNodeConfig)
+  const importPackagingSession = useCanvasLabStore((state) => state.importPackagingSession)
+  const importActiveChat = useCanvasLabStore((state) => state.importActiveChat)
+  const importReusableAssets = useCanvasLabStore((state) => state.importReusableAssets)
   const setOpenComposeNodeId = useCanvasLabStore((state) => state.setOpenComposeNodeId)
+  const setOpenDebugNodeId = useCanvasLabStore((state) => state.setOpenDebugNodeId)
   const assetsById = useCanvasLabStore((state) => state.assetsById)
+  const [isTranscriptGuidanceOpen, setIsTranscriptGuidanceOpen] = useState(false)
 
   if (!node) {
     return null
@@ -231,6 +350,15 @@ function CanvasLabNodeComponent({ data }: any) {
 
   const latestArtifact = [...artifacts].sort((a, b) => b.updatedAt - a.updatedAt)[0]
   const isRunning = node.status === 'running'
+  const transcriptConfig =
+    node.kind === 'transcript_source'
+      ? (node.config as CanvasNodeConfigMap['transcript_source'])
+      : null
+  const guidanceCount = transcriptConfig ? activeGuidanceFieldCount(transcriptConfig.brief) : 0
+  const latestError = latestRun?.status === 'error' ? latestRun.error?.trim() || '' : ''
+  const latestWarnings = latestRun?.warnings?.filter((warning) => warning.trim()) || []
+  const canOpenDebug = Boolean(latestRun?.requestPreview || latestRun?.responsePreview)
+  const isPackagingOutputNode = ['core_hook', 'description', 'titles', 'chapters', 'hashtags', 'thumbnail_copy', 'image_prompt'].includes(node.kind)
 
   const runNode = (message?: string, requestedCount?: number) => {
     void executeNode(node.id, { message, requestedCount })
@@ -248,72 +376,324 @@ function CanvasLabNodeComponent({ data }: any) {
           label={node.label}
           status={node.status}
           kind={node.kind}
+          onOpenDebug={canOpenDebug ? () => setOpenDebugNodeId(node.id) : undefined}
           onOpenCompose={node.kind === 'compose' ? () => setOpenComposeNodeId(node.id) : undefined}
         />
 
         <div className="space-y-3 px-4 py-3">
+          {latestError ? (
+            <div className="rounded-[1rem] border border-destructive/35 bg-destructive/8 px-3 py-2.5 text-xs leading-5 text-destructive">
+              {latestError}
+            </div>
+          ) : null}
+
+          {!latestError && latestWarnings.length > 0 ? (
+            <div className="rounded-[1rem] border border-amber-500/35 bg-amber-500/8 px-3 py-2.5 text-xs leading-5 text-amber-700 dark:text-amber-300">
+              {latestWarnings.join(' ')}
+            </div>
+          ) : null}
+
           {node.kind === 'transcript_source' ? (
             <>
               <Textarea
-                value={(node.config as CanvasNodeConfigMap['transcript_source']).transcript}
+                value={transcriptConfig?.transcript || ''}
                 onChange={(event) => {
                   const transcript = event.target.value
-                  void updateNodeConfig(node.id, () => ({
+                  void updateNodeConfig(node.id, (current) => ({
+                    ...(current as CanvasNodeConfigMap['transcript_source']),
                     transcript,
                     artifacts: deriveTranscriptArtifacts(transcript),
-                  }) as CanvasNodeConfigMap['transcript_source'])
+                  }))
                 }}
                 className="min-h-36 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
                 placeholder="Paste transcript here, or import from Packaging."
               />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-full px-3"
+                  onClick={() => {
+                    void importPackagingSession()
+                  }}
+                >
+                  Import Packaging
+                </Button>
+              </div>
               <p className="text-xs leading-5 text-muted-foreground">
                 This node auto-derives the digest, timestamp map, and key hooks for downstream nodes.
               </p>
+              {transcriptConfig ? (
+                <div className="overflow-hidden rounded-[1rem] border border-border/65 bg-background/55">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors hover:bg-background/60"
+                    onClick={() => setIsTranscriptGuidanceOpen((current) => !current)}
+                    aria-expanded={isTranscriptGuidanceOpen}
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-foreground">Optional guidance</p>
+                        {guidanceCount > 0 ? (
+                          <Badge variant="outline" className="rounded-full bg-background/70 text-[10px] uppercase">
+                            {guidanceCount} set
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <p className="text-xs leading-5 text-muted-foreground">
+                        {guidanceSummaryText(transcriptConfig.brief)}
+                      </p>
+                    </div>
+                    <ChevronDown
+                      className={cn(
+                        'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+                        isTranscriptGuidanceOpen && 'rotate-180',
+                      )}
+                    />
+                  </button>
+
+                  {isTranscriptGuidanceOpen ? (
+                    <div className="space-y-3 border-t border-border/60 px-3.5 py-3">
+                      <div className="space-y-2">
+                        <Label htmlFor={`${node.id}-must-include`} className="text-xs text-muted-foreground">
+                          Must include
+                        </Label>
+                        <Input
+                          id={`${node.id}-must-include`}
+                          value={transcriptConfig.brief.mustInclude}
+                          onChange={(event) => {
+                            const value = event.target.value
+                            void updateNodeConfig(node.id, (current) => ({
+                              ...(current as CanvasNodeConfigMap['transcript_source']),
+                              brief: {
+                                ...(current as CanvasNodeConfigMap['transcript_source']).brief,
+                                mustInclude: value,
+                              },
+                            }))
+                          }}
+                          className="rounded-[0.95rem] border-border/65 bg-background/80"
+                          placeholder="Required words, angles, or brand names"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor={`${node.id}-nice-to-include`} className="text-xs text-muted-foreground">
+                          Nice to include
+                        </Label>
+                        <Input
+                          id={`${node.id}-nice-to-include`}
+                          value={transcriptConfig.brief.niceToInclude}
+                          onChange={(event) => {
+                            const value = event.target.value
+                            void updateNodeConfig(node.id, (current) => ({
+                              ...(current as CanvasNodeConfigMap['transcript_source']),
+                              brief: {
+                                ...(current as CanvasNodeConfigMap['transcript_source']).brief,
+                                niceToInclude: value,
+                              },
+                            }))
+                          }}
+                          className="rounded-[0.95rem] border-border/65 bg-background/80"
+                          placeholder="Helpful extras if they fit"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor={`${node.id}-avoid-words`} className="text-xs text-muted-foreground">
+                          Words to avoid
+                        </Label>
+                        <Input
+                          id={`${node.id}-avoid-words`}
+                          value={transcriptConfig.brief.avoidWords}
+                          onChange={(event) => {
+                            const value = event.target.value
+                            void updateNodeConfig(node.id, (current) => ({
+                              ...(current as CanvasNodeConfigMap['transcript_source']),
+                              brief: {
+                                ...(current as CanvasNodeConfigMap['transcript_source']).brief,
+                                avoidWords: value,
+                              },
+                            }))
+                          }}
+                          className="rounded-[0.95rem] border-border/65 bg-background/80"
+                          placeholder="Terms you do not want in the output"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor={`${node.id}-packaging-directions`} className="text-xs text-muted-foreground">
+                          Packaging directions
+                        </Label>
+                        <Textarea
+                          id={`${node.id}-packaging-directions`}
+                          value={transcriptConfig.brief.additionalContext}
+                          onChange={(event) => {
+                            const value = event.target.value
+                            void updateNodeConfig(node.id, (current) => ({
+                              ...(current as CanvasNodeConfigMap['transcript_source']),
+                              brief: {
+                                ...(current as CanvasNodeConfigMap['transcript_source']).brief,
+                                additionalContext: value,
+                              },
+                            }))
+                          }}
+                          className="min-h-24 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
+                          placeholder="Audience, tone, packaging direction, or channel context"
+                        />
+                      </div>
+
+                      <div className="rounded-[0.95rem] border border-border/65 bg-background/70 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <Label htmlFor={`${node.id}-timestamps`} className="text-sm font-medium text-foreground">
+                              Prefer transcript timestamps
+                            </Label>
+                            <p className="text-xs leading-5 text-muted-foreground">
+                              Use transcript timestamps when chapters or timing-sensitive outputs need them.
+                            </p>
+                          </div>
+                          <Switch
+                            id={`${node.id}-timestamps`}
+                            checked={transcriptConfig.brief.transcriptIncludeTimestamps}
+                            onCheckedChange={(checked) => {
+                              void updateNodeConfig(node.id, (current) => ({
+                                ...(current as CanvasNodeConfigMap['transcript_source']),
+                                brief: {
+                                  ...(current as CanvasNodeConfigMap['transcript_source']).brief,
+                                  transcriptIncludeTimestamps: checked,
+                                },
+                              }))
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="rounded-[0.95rem] border border-border/65 bg-background/70 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <Label htmlFor={`${node.id}-include-name`} className="text-sm font-medium text-foreground">
+                              Include a specific name
+                            </Label>
+                            <p className="text-xs leading-5 text-muted-foreground">
+                              Use this when titles should anchor to a person, channel, or brand.
+                            </p>
+                          </div>
+                          <Switch
+                            id={`${node.id}-include-name`}
+                            checked={transcriptConfig.brief.includeName}
+                            onCheckedChange={(checked) => {
+                              void updateNodeConfig(node.id, (current) => ({
+                                ...(current as CanvasNodeConfigMap['transcript_source']),
+                                brief: {
+                                  ...(current as CanvasNodeConfigMap['transcript_source']).brief,
+                                  includeName: checked,
+                                },
+                              }))
+                            }}
+                          />
+                        </div>
+
+                        {transcriptConfig.brief.includeName ? (
+                          <div className="mt-3 space-y-2">
+                            <Label htmlFor={`${node.id}-name-for-titles`} className="text-xs text-muted-foreground">
+                              Name to include in titles
+                            </Label>
+                            <Input
+                              id={`${node.id}-name-for-titles`}
+                              value={transcriptConfig.brief.nameForTitles}
+                              onChange={(event) => {
+                                const value = event.target.value
+                                void updateNodeConfig(node.id, (current) => ({
+                                  ...(current as CanvasNodeConfigMap['transcript_source']),
+                                  brief: {
+                                    ...(current as CanvasNodeConfigMap['transcript_source']).brief,
+                                    nameForTitles: value,
+                                  },
+                                }))
+                              }}
+                              className="rounded-[0.95rem] border-border/65 bg-background/80"
+                              placeholder="Person, brand, or channel name"
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="rounded-[0.95rem] border border-border/65 bg-background/70 p-3">
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium text-foreground">Generated outputs</p>
+                          <p className="text-xs leading-5 text-muted-foreground">
+                            Checked outputs are generated when you run Transcript Source. Unchecked outputs stay on canvas if they already exist, but future transcript runs skip them.
+                          </p>
+                        </div>
+
+                        <div className="mt-3 space-y-2">
+                          {PACKAGING_OUTPUT_NODE_KINDS.map((kind) => {
+                            const selection = transcriptConfig.selectedOutputs[kind]
+                            return (
+                              <div
+                                key={kind}
+                                className="flex items-center gap-3 rounded-[0.9rem] border border-border/60 bg-background/80 px-3 py-2.5"
+                              >
+                                <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium text-foreground">
+                                      {OUTPUT_SELECTION_LABELS[kind]}
+                                    </p>
+                                    <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                                      {selection.enabled ? 'Included' : 'Skipped'}
+                                    </p>
+                                  </div>
+                                  {kind !== 'core_hook' ? (
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      value={String(selection.count)}
+                                      onChange={(event) => {
+                                        const value = Math.max(1, Number(event.target.value) || 1)
+                                        void updateNodeConfig(node.id, (current) => ({
+                                          ...(current as CanvasNodeConfigMap['transcript_source']),
+                                          selectedOutputs: {
+                                            ...(current as CanvasNodeConfigMap['transcript_source']).selectedOutputs,
+                                            [kind]: {
+                                              ...(current as CanvasNodeConfigMap['transcript_source']).selectedOutputs[kind],
+                                              count: value,
+                                            },
+                                          },
+                                        }))
+                                      }}
+                                      className="h-9 w-20 rounded-[0.8rem] border-border/65 bg-background/90 text-center"
+                                    />
+                                  ) : null}
+                                </div>
+                                <Switch
+                                  checked={selection.enabled}
+                                  onCheckedChange={(checked) => {
+                                    void updateNodeConfig(node.id, (current) => ({
+                                      ...(current as CanvasNodeConfigMap['transcript_source']),
+                                      selectedOutputs: {
+                                        ...(current as CanvasNodeConfigMap['transcript_source']).selectedOutputs,
+                                        [kind]: {
+                                          ...(current as CanvasNodeConfigMap['transcript_source']).selectedOutputs[kind],
+                                          enabled: checked,
+                                        },
+                                      },
+                                    }))
+                                  }}
+                                />
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </>
           ) : null}
 
-          {node.kind === 'packaging_brief' ? (
-            <div className="space-y-3">
-              <Input
-                value={(node.config as CanvasNodeConfigMap['packaging_brief']).mustInclude}
-                onChange={(event) => {
-                  const value = event.target.value
-                  void updateNodeConfig(node.id, (current) => ({
-                    ...(current as CanvasNodeConfigMap['packaging_brief']),
-                    mustInclude: value,
-                  }))
-                }}
-                className="rounded-[0.95rem] border-border/65 bg-background/80"
-                placeholder="Must include"
-              />
-              <Input
-                value={(node.config as CanvasNodeConfigMap['packaging_brief']).avoidWords}
-                onChange={(event) => {
-                  const value = event.target.value
-                  void updateNodeConfig(node.id, (current) => ({
-                    ...(current as CanvasNodeConfigMap['packaging_brief']),
-                    avoidWords: value,
-                  }))
-                }}
-                className="rounded-[0.95rem] border-border/65 bg-background/80"
-                placeholder="Words to avoid"
-              />
-              <Textarea
-                value={(node.config as CanvasNodeConfigMap['packaging_brief']).additionalContext}
-                onChange={(event) => {
-                  const value = event.target.value
-                  void updateNodeConfig(node.id, (current) => ({
-                    ...(current as CanvasNodeConfigMap['packaging_brief']),
-                    additionalContext: value,
-                  }))
-                }}
-                className="min-h-24 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
-                placeholder="Packaging direction, audience, or channel context"
-              />
-            </div>
-          ) : null}
-
-          {['titles', 'summary', 'chapters', 'thumbnail_copy', 'image_prompt'].includes(node.kind) ? (
+          {isPackagingOutputNode ? (
             <>
               <Textarea
                 value={(node.config as CanvasNodeConfigMap['titles']).draftInstruction}
@@ -330,12 +710,13 @@ function CanvasLabNodeComponent({ data }: any) {
               {latestArtifact ? (
                 <ScrollArea className="max-h-60 pr-2">
                   <div className="space-y-2">
-                    {latestArtifact.content?.trim() && latestArtifact.items.length === 0 ? (
-                      <div className="rounded-[1rem] border border-border/65 bg-background/70 p-3 text-sm leading-6 text-foreground">
-                        {latestArtifact.content}
-                      </div>
+                    {latestArtifact.content?.trim() && (latestArtifact.items.length === 0 || node.kind === 'core_hook') ? (
+                      <CopyableContentBlock content={latestArtifact.content} />
                     ) : null}
-                    {latestArtifact.items.map((item) => (
+                    {latestArtifact.content?.trim() && latestArtifact.items.length > 0 && (node.kind === 'hashtags' || node.kind === 'image_prompt') ? (
+                      <CopyableContentBlock content={latestArtifact.content} />
+                    ) : null}
+                    {(node.kind === 'core_hook' ? [] : latestArtifact.items).map((item) => (
                       <ArtifactItemRow
                         key={item.id}
                         artifact={latestArtifact}
@@ -355,6 +736,19 @@ function CanvasLabNodeComponent({ data }: any) {
 
           {node.kind === 'chat' ? (
             <>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-full px-3"
+                  onClick={() => {
+                    void importActiveChat()
+                  }}
+                >
+                  Import Active Chat
+                </Button>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <Select
                   value={(node.config as CanvasNodeConfigMap['chat']).provider}
@@ -574,7 +968,20 @@ function CanvasLabNodeComponent({ data }: any) {
               </ScrollArea>
             ) : (
               <div className="rounded-[1rem] border border-dashed border-border/70 bg-background/60 p-4 text-xs leading-5 text-muted-foreground">
-                Import reusable assets from the Image Gen tool to populate this node.
+                <div className="flex items-center justify-between gap-3">
+                  <span>Import reusable assets from the Image Gen tool to populate this node.</span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 rounded-full px-3"
+                    onClick={() => {
+                      void importReusableAssets()
+                    }}
+                  >
+                    Import Assets
+                  </Button>
+                </div>
               </div>
             )
           ) : null}
@@ -592,10 +999,18 @@ function CanvasLabNodeComponent({ data }: any) {
           ) : null}
         </div>
 
+        {node.kind === 'transcript_source' ? (
+          <RunFooter
+            onRun={() => runNode()}
+            isRunning={isRunning}
+          />
+        ) : null}
+
         {node.kind === 'chat' ? (
           <RunFooter
             onRun={() => runNode((node.config as CanvasNodeConfigMap['chat']).draftPrompt)}
             isRunning={isRunning}
+            primaryLabel={latestArtifact ? 'Refine' : 'Run'}
           />
         ) : null}
 
@@ -606,13 +1021,15 @@ function CanvasLabNodeComponent({ data }: any) {
             onRunTenMore={() => runNode((node.config as CanvasNodeConfigMap['titles']).draftInstruction || 'Give me 10 more in a fresh direction.', 10)}
             isRunning={isRunning}
             allowCountButtons
+            primaryLabel={latestArtifact ? 'Refine' : 'Run'}
           />
         ) : null}
 
-        {['summary', 'chapters', 'image_prompt', 'image_generate'].includes(node.kind) ? (
+        {['core_hook', 'description', 'chapters', 'hashtags', 'image_prompt', 'image_generate'].includes(node.kind) ? (
           <RunFooter
             onRun={() => runNode((node.config as CanvasNodeConfigMap['titles']).draftInstruction)}
             isRunning={isRunning}
+            primaryLabel={latestArtifact ? 'Refine' : 'Run'}
           />
         ) : null}
       </Card>

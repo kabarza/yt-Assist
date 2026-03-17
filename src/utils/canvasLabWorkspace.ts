@@ -8,11 +8,12 @@ import type {
   CanvasNode,
   CanvasNodeConfigMap,
   CanvasWorkspace,
-  ComposeNodeConfig,
   ComposeItem,
   NodeRun,
   NodeThreadMessage,
   PackagingBriefConfig,
+  PackagingOutputNodeKind,
+  PackagingOutputSelectionMap,
   TranscriptArtifacts,
 } from '@/types/canvasLab'
 import type { AppSettings } from '@/stores/settingsStore'
@@ -27,12 +28,32 @@ export const DEFAULT_PACKAGING_BRIEF: PackagingBriefConfig = {
   transcriptIncludeTimestamps: true,
 }
 
+export const PACKAGING_OUTPUT_NODE_KINDS: PackagingOutputNodeKind[] = [
+  'core_hook',
+  'description',
+  'titles',
+  'thumbnail_copy',
+  'chapters',
+  'hashtags',
+]
+
+export const DEFAULT_PACKAGING_OUTPUT_SELECTIONS: PackagingOutputSelectionMap = {
+  core_hook: { enabled: true, count: 1 },
+  description: { enabled: true, count: 3 },
+  titles: { enabled: true, count: 10 },
+  thumbnail_copy: { enabled: true, count: 10 },
+  chapters: { enabled: true, count: 8 },
+  hashtags: { enabled: true, count: 5 },
+}
+
 const DEFAULT_NODE_LABELS: Record<CanvasLabNodeKind, string> = {
   transcript_source: 'Transcript Source',
-  packaging_brief: 'Packaging Brief',
+  core_hook: 'Core Hook',
+  description: 'Description',
   titles: 'Titles',
   summary: 'Summary',
   chapters: 'Chapters',
+  hashtags: 'Hashtags',
   thumbnail_copy: 'Thumbnail Copy',
   image_prompt: 'Image Prompt',
   image_generate: 'Image Gen',
@@ -43,10 +64,12 @@ const DEFAULT_NODE_LABELS: Record<CanvasLabNodeKind, string> = {
 
 const LEGACY_DEFAULT_NODE_POSITIONS: Record<CanvasLabNodeKind, { x: number; y: number }> = {
   transcript_source: { x: 36, y: 70 },
-  packaging_brief: { x: 36, y: 410 },
+  core_hook: { x: 420, y: 36 },
+  description: { x: 420, y: 268 },
   titles: { x: 420, y: 36 },
   summary: { x: 420, y: 268 },
   chapters: { x: 420, y: 500 },
+  hashtags: { x: 420, y: 964 },
   thumbnail_copy: { x: 420, y: 732 },
   image_prompt: { x: 816, y: 154 },
   image_generate: { x: 1210, y: 154 },
@@ -57,12 +80,14 @@ const LEGACY_DEFAULT_NODE_POSITIONS: Record<CanvasLabNodeKind, { x: number; y: n
 
 const DEFAULT_CANVAS_LAYOUT: Record<CanvasLabNodeKind, { x: number; y: number }> = {
   transcript_source: { x: 88, y: 80 },
-  packaging_brief: { x: 88, y: 458 },
-  chat: { x: 88, y: 878 },
-  titles: { x: 592, y: 36 },
+  core_hook: { x: 592, y: 36 },
+  description: { x: 592, y: 308 },
+  titles: { x: 964, y: 36 },
+  thumbnail_copy: { x: 964, y: 308 },
+  chapters: { x: 592, y: 644 },
+  hashtags: { x: 964, y: 644 },
+  chat: { x: 88, y: 604 },
   summary: { x: 592, y: 308 },
-  thumbnail_copy: { x: 592, y: 580 },
-  chapters: { x: 592, y: 892 },
   image_prompt: { x: 1120, y: 120 },
   asset_library: { x: 1120, y: 486 },
   image_generate: { x: 1648, y: 120 },
@@ -84,6 +109,10 @@ export function createEmptyTranscriptArtifacts(): TranscriptArtifacts {
     timestampMap: '',
     keyHooks: [],
   }
+}
+
+export function createDefaultPackagingOutputSelections(): PackagingOutputSelectionMap {
+  return JSON.parse(JSON.stringify(DEFAULT_PACKAGING_OUTPUT_SELECTIONS)) as PackagingOutputSelectionMap
 }
 
 function normalizeWhitespace(value: string) {
@@ -156,7 +185,7 @@ function createNodeBase(kind: CanvasLabNodeKind, label: string, x: number, y: nu
   }
 }
 
-function getDefaultCanvasPosition(kind: CanvasLabNodeKind) {
+export function getDefaultCanvasPosition(kind: CanvasLabNodeKind) {
   return DEFAULT_CANVAS_LAYOUT[kind]
 }
 
@@ -216,14 +245,54 @@ function normalizeTranscriptArtifacts(input: unknown, transcript: string): Trans
   }
 }
 
-function defaultOutputRequestedCount(kind: Extract<CanvasLabNodeKind, 'titles' | 'summary' | 'chapters' | 'thumbnail_copy' | 'image_prompt'>) {
+function normalizePackagingBriefConfig(input: unknown): PackagingBriefConfig {
+  if (!isRecord(input)) {
+    return { ...DEFAULT_PACKAGING_BRIEF }
+  }
+
+  return {
+    mustInclude: getString(input.mustInclude),
+    niceToInclude: getString(input.niceToInclude),
+    avoidWords: getString(input.avoidWords),
+    includeName: getBoolean(input.includeName),
+    nameForTitles: getString(input.nameForTitles),
+    additionalContext: getString(input.additionalContext),
+    transcriptIncludeTimestamps: getBoolean(input.transcriptIncludeTimestamps, true),
+  }
+}
+
+function normalizePackagingOutputSelections(input: unknown): PackagingOutputSelectionMap {
+  const fallback = createDefaultPackagingOutputSelections()
+  if (!isRecord(input)) {
+    return fallback
+  }
+
+  return PACKAGING_OUTPUT_NODE_KINDS.reduce<PackagingOutputSelectionMap>((accumulator, kind) => {
+    const rawSelection = isRecord(input[kind]) ? input[kind] : null
+    accumulator[kind] = {
+      enabled: rawSelection ? getBoolean(rawSelection.enabled, fallback[kind].enabled) : fallback[kind].enabled,
+      count: rawSelection ? getFinitePositiveInteger(rawSelection.count, fallback[kind].count) : fallback[kind].count,
+    }
+    return accumulator
+  }, createDefaultPackagingOutputSelections())
+}
+
+function defaultOutputRequestedCount(
+  kind: Extract<CanvasLabNodeKind, 'core_hook' | 'description' | 'titles' | 'summary' | 'chapters' | 'hashtags' | 'thumbnail_copy' | 'image_prompt'>,
+) {
   switch (kind) {
+    case 'core_hook':
+      return 1
+    case 'description':
+      return 3
     case 'titles':
       return 10
     case 'summary':
       return 1
     case 'chapters':
       return 8
+    case 'hashtags':
+      return 5
     case 'thumbnail_copy':
       return 10
     case 'image_prompt':
@@ -248,12 +317,15 @@ function createDefaultNodeConfig(kind: CanvasLabNodeKind, settings: AppSettings)
       return {
         transcript: '',
         artifacts: createEmptyTranscriptArtifacts(),
+        brief: { ...DEFAULT_PACKAGING_BRIEF },
+        selectedOutputs: createDefaultPackagingOutputSelections(),
       }
-    case 'packaging_brief':
-      return { ...DEFAULT_PACKAGING_BRIEF }
+    case 'core_hook':
+    case 'description':
     case 'titles':
     case 'summary':
     case 'chapters':
+    case 'hashtags':
     case 'thumbnail_copy':
     case 'image_prompt':
       return {
@@ -340,24 +412,20 @@ function normalizeNodeConfig(
   switch (kind) {
     case 'transcript_source': {
       const transcript = getString(config.transcript)
+      const briefSource = isRecord(config.brief) ? config.brief : config
       return {
         transcript,
         artifacts: normalizeTranscriptArtifacts(config.artifacts, transcript),
+        brief: normalizePackagingBriefConfig(briefSource),
+        selectedOutputs: normalizePackagingOutputSelections(config.selectedOutputs),
       }
     }
-    case 'packaging_brief':
-      return {
-        mustInclude: getString(config.mustInclude),
-        niceToInclude: getString(config.niceToInclude),
-        avoidWords: getString(config.avoidWords),
-        includeName: getBoolean(config.includeName),
-        nameForTitles: getString(config.nameForTitles),
-        additionalContext: getString(config.additionalContext),
-        transcriptIncludeTimestamps: getBoolean(config.transcriptIncludeTimestamps, true),
-      }
+    case 'core_hook':
+    case 'description':
     case 'titles':
     case 'summary':
     case 'chapters':
+    case 'hashtags':
     case 'thumbnail_copy':
     case 'image_prompt':
       return {
@@ -477,20 +545,25 @@ function normalizeArtifactItem(item: unknown): ArtifactItem | null {
   }
 }
 
-function normalizeArtifacts(input: unknown, validNodeIds: Set<string>) {
+function normalizeArtifacts(
+  input: unknown,
+  validNodeIds: Set<string>,
+  nodeIdRemap: Record<string, string> = {},
+) {
   if (!Array.isArray(input)) return []
 
-  const artifacts: Artifact[] = []
+  const artifactsByKey = new Map<string, Artifact>()
 
   for (const artifact of input) {
       if (!isRecord(artifact)) continue
-      const nodeId = getString(artifact.nodeId)
+      const rawNodeId = getString(artifact.nodeId)
+      const nodeId = nodeIdRemap[rawNodeId] || rawNodeId
       if (!nodeId || !validNodeIds.has(nodeId)) continue
       const kind = getString(artifact.kind)
       const label = getString(artifact.label).trim()
       if (!kind || !label) continue
 
-      artifacts.push({
+      const nextArtifact = {
         id: getString(artifact.id, generateId()),
         nodeId,
         kind: kind as Artifact['kind'],
@@ -503,10 +576,16 @@ function normalizeArtifacts(input: unknown, validNodeIds: Set<string>) {
           : [],
         createdAt: getFiniteNumber(artifact.createdAt, Date.now()),
         updatedAt: getFiniteNumber(artifact.updatedAt, Date.now()),
-      })
+      } satisfies Artifact
+
+      const artifactKey = `${nodeId}:${kind}`
+      const existingArtifact = artifactsByKey.get(artifactKey)
+      if (!existingArtifact || nextArtifact.updatedAt >= existingArtifact.updatedAt) {
+        artifactsByKey.set(artifactKey, nextArtifact)
+      }
   }
 
-  return artifacts
+  return [...artifactsByKey.values()]
 }
 
 function normalizeRuns(input: unknown, validNodeIds: Set<string>) {
@@ -547,6 +626,9 @@ function normalizeRuns(input: unknown, validNodeIds: Set<string>) {
           ? run.warnings.filter((warning): warning is string => typeof warning === 'string')
           : undefined,
         error: getString(run.error, '') || undefined,
+        requestPreview: getString(run.requestPreview, '') || undefined,
+        responsePreview: getString(run.responsePreview, '') || undefined,
+        sourceRunId: getString(run.sourceRunId, '') || undefined,
       })
   }
 
@@ -584,192 +666,99 @@ function normalizeThreadMessages(input: unknown, validNodeIds: Set<string>) {
 function normalizeEdges(
   input: unknown,
   validNodeIds: Set<string>,
+  nodeIdRemap: Record<string, string> = {},
 ) {
   if (!Array.isArray(input)) return []
 
-  const nextEdges = input
-    .map((edge) => {
-      if (!isRecord(edge)) return null
-      const source = getString(edge.source)
-      const target = getString(edge.target)
-      if (!source || !target || source === target) return null
-      if (!validNodeIds.has(source) || !validNodeIds.has(target)) return null
+  const seenConnections = new Set<string>()
+  const nextEdges: CanvasEdge[] = []
 
-      return {
-        id: getString(edge.id, generateId()),
-        source,
-        target,
-        createdAt: getFiniteNumber(edge.createdAt, Date.now()),
-      } satisfies CanvasEdge
+  for (const edge of input) {
+    if (!isRecord(edge)) continue
+    const rawSource = getString(edge.source)
+    const rawTarget = getString(edge.target)
+    const source = nodeIdRemap[rawSource] || rawSource
+    const target = nodeIdRemap[rawTarget] || rawTarget
+    if (!source || !target || source === target) continue
+    if (!validNodeIds.has(source) || !validNodeIds.has(target)) continue
+
+    const connectionKey = `${source}:${target}`
+    if (seenConnections.has(connectionKey)) continue
+    seenConnections.add(connectionKey)
+
+    nextEdges.push({
+      id: getString(edge.id, generateId()),
+      source,
+      target,
+      createdAt: getFiniteNumber(edge.createdAt, Date.now()),
     })
-    .filter((edge): edge is CanvasEdge => Boolean(edge))
+  }
 
   return nextEdges
 }
 
+function mapLegacyNodeKind(kind: string): CanvasLabNodeKind | null {
+  if (kind === 'summary') return 'description'
+  if (kind === 'packaging_brief') return 'transcript_source'
+  return kind in DEFAULT_NODE_LABELS ? (kind as CanvasLabNodeKind) : null
+}
+
+function mapLegacyArtifactKind(kind: string): Artifact['kind'] {
+  if (kind === 'summary') return 'description'
+  return kind as Artifact['kind']
+}
+
+export function createCanvasNode(kind: CanvasLabNodeKind, settings: AppSettings): CanvasNode {
+  const position = getDefaultCanvasPosition(kind)
+  return {
+    ...createNodeBase(
+      kind,
+      DEFAULT_NODE_LABELS[kind],
+      position.x,
+      position.y,
+    ),
+    config: createDefaultNodeConfig(kind, settings),
+  }
+}
+
+export function buildDefaultEdges(
+  nodeIdByKind: Partial<Record<CanvasLabNodeKind, string>>,
+): CanvasEdge[] {
+  const possibleEdges: Array<[CanvasLabNodeKind, CanvasLabNodeKind]> = [
+    ['transcript_source', 'core_hook'],
+    ['transcript_source', 'description'],
+    ['transcript_source', 'titles'],
+    ['transcript_source', 'thumbnail_copy'],
+    ['transcript_source', 'chapters'],
+    ['transcript_source', 'hashtags'],
+    ['transcript_source', 'chat'],
+    ['transcript_source', 'image_prompt'],
+    ['titles', 'image_prompt'],
+    ['thumbnail_copy', 'image_prompt'],
+    ['image_prompt', 'image_generate'],
+    ['asset_library', 'image_generate'],
+    ['titles', 'compose'],
+    ['thumbnail_copy', 'compose'],
+    ['image_generate', 'compose'],
+    ['asset_library', 'compose'],
+  ]
+
+  return possibleEdges.flatMap(([sourceKind, targetKind]) => {
+    const source = nodeIdByKind[sourceKind]
+    const target = nodeIdByKind[targetKind]
+    if (!source || !target) return []
+    return [{
+      id: generateId(),
+      source,
+      target,
+      createdAt: Date.now(),
+    }]
+  })
+}
+
 export function createInitialCanvasWorkspace(name: string, settings: AppSettings): CanvasWorkspace {
-  const transcriptPosition = getDefaultCanvasPosition('transcript_source')
-  const transcriptNode = {
-    ...createNodeBase(
-      'transcript_source',
-      'Transcript Source',
-      transcriptPosition.x,
-      transcriptPosition.y,
-    ),
-    config: {
-      transcript: '',
-      artifacts: createEmptyTranscriptArtifacts(),
-    },
-  }
-
-  const briefPosition = getDefaultCanvasPosition('packaging_brief')
-  const briefNode = {
-    ...createNodeBase(
-      'packaging_brief',
-      'Packaging Brief',
-      briefPosition.x,
-      briefPosition.y,
-    ),
-    config: { ...DEFAULT_PACKAGING_BRIEF },
-  }
-
-  const openAiModel = MODELS.openai.some((entry) => entry.id === settings.defaultModel)
-    ? settings.defaultModel
-    : MODELS.openai[0].id
-
-  const chatModel =
-    settings.defaultProvider === 'anthropic'
-      ? MODELS.anthropic.some((entry) => entry.id === settings.defaultModel)
-        ? settings.defaultModel
-        : MODELS.anthropic[0].id
-      : openAiModel
-
-  const composeConfig: ComposeNodeConfig = {
-    items: [],
-    selectedItemId: null,
-  }
-
-  const nodes = [
-    transcriptNode,
-    briefNode,
-    {
-      ...createNodeBase(
-        'titles',
-        'Titles',
-        DEFAULT_CANVAS_LAYOUT.titles.x,
-        DEFAULT_CANVAS_LAYOUT.titles.y,
-      ),
-      config: { requestedCount: 10, draftInstruction: '' },
-    },
-    {
-      ...createNodeBase(
-        'summary',
-        'Summary',
-        DEFAULT_CANVAS_LAYOUT.summary.x,
-        DEFAULT_CANVAS_LAYOUT.summary.y,
-      ),
-      config: { requestedCount: 1, draftInstruction: '' },
-    },
-    {
-      ...createNodeBase(
-        'chapters',
-        'Chapters',
-        DEFAULT_CANVAS_LAYOUT.chapters.x,
-        DEFAULT_CANVAS_LAYOUT.chapters.y,
-      ),
-      config: { requestedCount: 8, draftInstruction: '' },
-    },
-    {
-      ...createNodeBase(
-        'thumbnail_copy',
-        'Thumbnail Copy',
-        DEFAULT_CANVAS_LAYOUT.thumbnail_copy.x,
-        DEFAULT_CANVAS_LAYOUT.thumbnail_copy.y,
-      ),
-      config: { requestedCount: 10, draftInstruction: '' },
-    },
-    {
-      ...createNodeBase(
-        'image_prompt',
-        'Image Prompt',
-        DEFAULT_CANVAS_LAYOUT.image_prompt.x,
-        DEFAULT_CANVAS_LAYOUT.image_prompt.y,
-      ),
-      config: { requestedCount: 1, draftInstruction: '' },
-    },
-    {
-      ...createNodeBase(
-        'image_generate',
-        'Image Gen',
-        DEFAULT_CANVAS_LAYOUT.image_generate.x,
-        DEFAULT_CANVAS_LAYOUT.image_generate.y,
-      ),
-      config: {
-        model: 'gemini-3.1-flash-image-preview',
-        count: 1,
-        aspectRatio: '16:9',
-        imageSize: '1K',
-      } as const,
-    },
-    {
-      ...createNodeBase(
-        'asset_library',
-        'Asset Library',
-        DEFAULT_CANVAS_LAYOUT.asset_library.x,
-        DEFAULT_CANVAS_LAYOUT.asset_library.y,
-      ),
-      config: { assetIds: [] },
-    },
-    {
-      ...createNodeBase(
-        'compose',
-        'Compose',
-        DEFAULT_CANVAS_LAYOUT.compose.x,
-        DEFAULT_CANVAS_LAYOUT.compose.y,
-      ),
-      config: composeConfig,
-    },
-    {
-      ...createNodeBase(
-        'chat',
-        'Chat',
-        DEFAULT_CANVAS_LAYOUT.chat.x,
-        DEFAULT_CANVAS_LAYOUT.chat.y,
-      ),
-      config: {
-        provider: settings.defaultProvider,
-        model: chatModel,
-        draftPrompt: '',
-        systemPrompt: '',
-      },
-    },
-  ]
-
-  const [sourceId, briefId, titlesId, summaryId, chaptersId, thumbId, imagePromptId, imageGenId, assetId, composeId, chatId] =
-    nodes.map((node) => node.id)
-
-  const edges = [
-    { id: generateId(), source: sourceId, target: titlesId, createdAt: Date.now() },
-    { id: generateId(), source: briefId, target: titlesId, createdAt: Date.now() },
-    { id: generateId(), source: sourceId, target: summaryId, createdAt: Date.now() },
-    { id: generateId(), source: briefId, target: summaryId, createdAt: Date.now() },
-    { id: generateId(), source: sourceId, target: chaptersId, createdAt: Date.now() },
-    { id: generateId(), source: briefId, target: chaptersId, createdAt: Date.now() },
-    { id: generateId(), source: sourceId, target: thumbId, createdAt: Date.now() },
-    { id: generateId(), source: briefId, target: thumbId, createdAt: Date.now() },
-    { id: generateId(), source: titlesId, target: imagePromptId, createdAt: Date.now() },
-    { id: generateId(), source: thumbId, target: imagePromptId, createdAt: Date.now() },
-    { id: generateId(), source: sourceId, target: imagePromptId, createdAt: Date.now() },
-    { id: generateId(), source: briefId, target: imagePromptId, createdAt: Date.now() },
-    { id: generateId(), source: imagePromptId, target: imageGenId, createdAt: Date.now() },
-    { id: generateId(), source: assetId, target: imageGenId, createdAt: Date.now() },
-    { id: generateId(), source: titlesId, target: composeId, createdAt: Date.now() },
-    { id: generateId(), source: thumbId, target: composeId, createdAt: Date.now() },
-    { id: generateId(), source: imageGenId, target: composeId, createdAt: Date.now() },
-    { id: generateId(), source: assetId, target: composeId, createdAt: Date.now() },
-    { id: generateId(), source: sourceId, target: chatId, createdAt: Date.now() },
-    { id: generateId(), source: briefId, target: chatId, createdAt: Date.now() },
-  ]
+  const nodes = [createCanvasNode('transcript_source', settings)]
+  const edges: CanvasEdge[] = []
 
   const now = Date.now()
 
@@ -797,53 +786,105 @@ export function normalizeCanvasWorkspace(
 
   const fallback = createInitialCanvasWorkspace(name, settings)
   const fallbackByKind = Object.fromEntries(
-    fallback.nodes.map((node) => [node.kind, node]),
+    Object.keys(DEFAULT_NODE_LABELS).map((kind) => [
+      kind,
+      createCanvasNode(kind as CanvasLabNodeKind, settings),
+    ]),
   ) as Record<CanvasLabNodeKind, CanvasNode>
 
   const existingNodesByKind = new Map<CanvasLabNodeKind, unknown>()
   if (isRecord(workspace) && Array.isArray(workspace.nodes)) {
     for (const node of workspace.nodes) {
       if (!isRecord(node) || typeof node.kind !== 'string') continue
-      if (!(node.kind in fallbackByKind)) continue
-      if (!existingNodesByKind.has(node.kind as CanvasLabNodeKind)) {
-        existingNodesByKind.set(node.kind as CanvasLabNodeKind, node)
+      const mappedKind = mapLegacyNodeKind(node.kind)
+      if (!mappedKind) continue
+      if (!existingNodesByKind.has(mappedKind)) {
+        existingNodesByKind.set(mappedKind, { ...node, kind: mappedKind })
       }
     }
   }
 
-  const nodes = fallback.nodes.map((fallbackNode) =>
+  const rawTranscriptSourceNode = existingNodesByKind.get('transcript_source')
+  const legacyBriefNode =
+    isRecord(workspace) && Array.isArray(workspace.nodes)
+      ? workspace.nodes.find(
+          (node): node is Record<string, unknown> =>
+            isRecord(node) && node.kind === 'packaging_brief',
+        )
+      : undefined
+
+  const shouldAdoptLegacyBrief =
+    Boolean(legacyBriefNode) &&
+    !(
+      isRecord(rawTranscriptSourceNode) &&
+      isRecord(rawTranscriptSourceNode.config) &&
+      isRecord(rawTranscriptSourceNode.config.brief)
+    )
+
+  const legacyBriefConfig = shouldAdoptLegacyBrief
+    ? normalizePackagingBriefConfig(legacyBriefNode?.config)
+    : null
+
+  const kindsToKeep = new Set<CanvasLabNodeKind>(['transcript_source'])
+  for (const kind of existingNodesByKind.keys()) {
+    kindsToKeep.add(kind)
+  }
+
+  let nodes = [...kindsToKeep].map((kind) =>
     normalizeNode(
-      existingNodesByKind.get(fallbackNode.kind),
-      fallbackNode.kind,
+      existingNodesByKind.get(kind),
+      kind,
       settings,
-      fallbackNode,
+      fallbackByKind[kind],
     ),
   )
+
+  if (legacyBriefConfig) {
+    nodes = nodes.map((node) =>
+      node.kind === 'transcript_source'
+        ? {
+            ...node,
+            config: {
+              ...(node.config as CanvasNodeConfigMap['transcript_source']),
+              brief: legacyBriefConfig,
+            },
+            updatedAt: Math.max(
+              node.updatedAt,
+              getFiniteNumber(legacyBriefNode?.updatedAt, node.updatedAt),
+            ),
+          }
+        : node,
+    )
+  }
 
   const validNodeIds = new Set(nodes.map((node) => node.id))
   const nodeIdByKind = Object.fromEntries(nodes.map((node) => [node.kind, node.id])) as Record<
     CanvasLabNodeKind,
     string
   >
+  const nodeIdRemap =
+    legacyBriefNode && getString(legacyBriefNode.id)
+      ? { [getString(legacyBriefNode.id)]: nodeIdByKind.transcript_source }
+      : {}
 
   const persistedEdges =
     isRecord(workspace) && 'edges' in workspace
-      ? normalizeEdges(workspace.edges, validNodeIds)
+      ? normalizeEdges(workspace.edges, validNodeIds, nodeIdRemap)
       : []
 
   const edges =
     persistedEdges.length > 0
       ? persistedEdges
-      : fallback.edges.map((edge) => {
-          const sourceKind = fallback.nodes.find((node) => node.id === edge.source)?.kind
-          const targetKind = fallback.nodes.find((node) => node.id === edge.target)?.kind
-          return {
-            id: generateId(),
-            source: sourceKind ? nodeIdByKind[sourceKind] : edge.source,
-            target: targetKind ? nodeIdByKind[targetKind] : edge.target,
-            createdAt: edge.createdAt,
-          }
-        })
+      : buildDefaultEdges(nodeIdByKind)
+
+  const normalizedArtifacts =
+    isRecord(workspace)
+      ? normalizeArtifacts(workspace.artifacts, validNodeIds, nodeIdRemap).map((artifact) => ({
+          ...artifact,
+          kind: mapLegacyArtifactKind(artifact.kind),
+          label: artifact.kind === 'summary' ? 'Description' : artifact.label,
+        }))
+      : []
 
   return {
     id: isRecord(workspace) ? getString(workspace.id, fallback.id) : fallback.id,
@@ -852,7 +893,7 @@ export function normalizeCanvasWorkspace(
     updatedAt: isRecord(workspace) ? getFiniteNumber(workspace.updatedAt, fallback.updatedAt) : fallback.updatedAt,
     nodes,
     edges,
-    artifacts: isRecord(workspace) ? normalizeArtifacts(workspace.artifacts, validNodeIds) : [],
+    artifacts: normalizedArtifacts,
     runs: isRecord(workspace) ? normalizeRuns(workspace.runs, validNodeIds) : [],
     threadMessages: isRecord(workspace)
       ? normalizeThreadMessages(workspace.threadMessages, validNodeIds)

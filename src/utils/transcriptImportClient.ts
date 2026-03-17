@@ -1,5 +1,6 @@
 import { useSettingsStore } from '../stores/settingsStore'
 import type { TranscriptImportResponse } from '../types/transcriptImport'
+import { fetchApi } from './fetchApi'
 
 interface ImportTranscriptOptions {
   url: string
@@ -48,7 +49,7 @@ function buildRequestBody(options: ImportTranscriptOptions): ImportTranscriptReq
 export async function requestTranscriptImport(
   options: ImportTranscriptOptions
 ): Promise<TranscriptImportResponse> {
-  const response = await fetch('/api/transcripts/import', {
+  const response = await fetchApi('/api/transcripts/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildRequestBody(options)),
@@ -103,7 +104,7 @@ export async function pollTranscriptImport(
       await sleep(intervalMs, options.signal)
     }
 
-    const response = await fetch(`/api/transcripts/import/${encodeURIComponent(jobId)}`, {
+    const response = await fetchApi(`/api/transcripts/import/${encodeURIComponent(jobId)}`, {
       signal: options.signal,
     })
 

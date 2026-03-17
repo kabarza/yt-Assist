@@ -210,7 +210,7 @@ export default function ComposeStage({
   }
 
   const availableArtifacts = workspace.artifacts.filter((artifact) =>
-    ['title_suggestions', 'thumbnail_copy', 'summary', 'generated_image'].includes(artifact.kind),
+    ['title_suggestions', 'thumbnail_copy', 'description', 'generated_image'].includes(artifact.kind),
   )
 
   const acceptedArtifactItems = availableArtifacts.flatMap((artifact) =>

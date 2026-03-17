@@ -19,6 +19,7 @@ import type {
   ArtifactItem,
   CanvasAsset,
   CanvasExecuteNodeRequest,
+  CanvasExecutionOutputPayload,
   CanvasLabFlowEdge,
   CanvasLabFlowNode,
   CanvasLabNodeKind,
@@ -29,6 +30,9 @@ import type {
   ComposeItem,
   NodeRun,
   NodeThreadMessage,
+  PackagingBriefConfig,
+  PackagingOutputNodeKind,
+  PackagingOutputSelectionMap,
   StoredCanvasAsset,
 } from '@/types/canvasLab'
 import { blobToDataUrl, requestCanvasNodeExecution } from '@/utils/canvasLabClient'
@@ -41,9 +45,14 @@ import {
 } from '@/utils/canvasLabPersistence'
 import {
   artifactPreviewText,
+  buildDefaultEdges,
+  createCanvasNode,
+  createDefaultPackagingOutputSelections,
   createInitialCanvasWorkspace,
   deriveTranscriptArtifacts,
+  getDefaultCanvasPosition,
   normalizeCanvasWorkspace,
+  PACKAGING_OUTPUT_NODE_KINDS,
   upsertArtifactItems,
 } from '@/utils/canvasLabWorkspace'
 
@@ -58,6 +67,7 @@ interface CanvasLabStore {
   activeWorkspaceId: string | null
   selectedNodeId: string | null
   openComposeNodeId: string | null
+  openDebugNodeId: string | null
   hydrate: () => Promise<void>
   createWorkspace: (name?: string) => Promise<string>
   deleteWorkspace: (workspaceId: string) => Promise<void>
@@ -65,6 +75,8 @@ interface CanvasLabStore {
   setActiveWorkspaceId: (workspaceId: string | null) => void
   setSelectedNodeId: (nodeId: string | null) => void
   setOpenComposeNodeId: (nodeId: string | null) => void
+  setOpenDebugNodeId: (nodeId: string | null) => void
+  addNode: (kind: Extract<CanvasLabNodeKind, 'chat' | 'image_prompt' | 'image_generate' | 'asset_library' | 'compose'>) => Promise<void>
   applyFlowNodeChanges: (changes: NodeChange[]) => Promise<void>
   applyFlowEdgeChanges: (changes: EdgeChange[]) => Promise<void>
   connectNodes: (connection: Connection) => Promise<void>
@@ -93,6 +105,26 @@ interface CanvasLabStore {
 
 let hydratePromise: Promise<void> | null = null
 
+const CONNECTION_RULES: Partial<Record<CanvasLabNodeKind, CanvasLabNodeKind[]>> = {
+  transcript_source: ['core_hook', 'description', 'titles', 'chapters', 'hashtags', 'thumbnail_copy', 'image_prompt', 'chat'],
+  titles: ['image_prompt', 'compose'],
+  description: ['compose'],
+  thumbnail_copy: ['image_prompt', 'compose'],
+  image_prompt: ['image_generate'],
+  image_generate: ['compose'],
+  asset_library: ['image_generate', 'compose'],
+}
+
+const MANUAL_NODE_KINDS: Array<Extract<CanvasLabNodeKind, 'chat' | 'image_prompt' | 'image_generate' | 'asset_library' | 'compose'>> = [
+  'chat',
+  'image_prompt',
+  'image_generate',
+  'asset_library',
+  'compose',
+]
+
+const AUTOMATIC_PACKAGING_NODE_KINDS = new Set<PackagingOutputNodeKind>(PACKAGING_OUTPUT_NODE_KINDS)
+
 function loadActiveWorkspaceId() {
   try {
     return localStorage.getItem(ACTIVE_WORKSPACE_KEY)
@@ -111,6 +143,61 @@ function saveActiveWorkspaceId(workspaceId: string | null) {
   } catch {
     // Ignore localStorage failures.
   }
+}
+
+function loadPackagingOutputSelections(): PackagingOutputSelectionMap {
+  const selections = createDefaultPackagingOutputSelections()
+
+  try {
+    const raw = localStorage.getItem('yt-assist-output-types')
+    if (!raw) return selections
+    const parsed = JSON.parse(raw) as Array<{ id?: string; enabled?: boolean; quantity?: number }>
+
+    for (const output of parsed) {
+      switch (output.id) {
+        case 'core-hook':
+          selections.core_hook = {
+            enabled: output.enabled ?? selections.core_hook.enabled,
+            count: selections.core_hook.count,
+          }
+          break
+        case 'descriptions':
+          selections.description = {
+            enabled: output.enabled ?? selections.description.enabled,
+            count: output.quantity || selections.description.count,
+          }
+          break
+        case 'titles-thumbnails':
+          selections.titles = {
+            enabled: output.enabled ?? selections.titles.enabled,
+            count: output.quantity || selections.titles.count,
+          }
+          break
+        case 'extra-thumbnails':
+          selections.thumbnail_copy = {
+            enabled: output.enabled ?? selections.thumbnail_copy.enabled,
+            count: output.quantity || selections.thumbnail_copy.count,
+          }
+          break
+        case 'chapters':
+          selections.chapters = {
+            enabled: output.enabled ?? selections.chapters.enabled,
+            count: selections.chapters.count,
+          }
+          break
+        case 'hashtags':
+          selections.hashtags = {
+            enabled: output.enabled ?? selections.hashtags.enabled,
+            count: output.quantity || selections.hashtags.count,
+          }
+          break
+      }
+    }
+  } catch {
+    // Ignore broken local storage and fall back to defaults.
+  }
+
+  return selections
 }
 
 function toFlowNodes(workspace: CanvasWorkspace): CanvasLabFlowNode[] {
@@ -192,6 +279,162 @@ function getOutgoingNodeIds(workspace: CanvasWorkspace, nodeId: string) {
     .map((edge) => edge.target)
 }
 
+function getNodeById(workspace: CanvasWorkspace, nodeId: string) {
+  return workspace.nodes.find((node) => node.id === nodeId) || null
+}
+
+function getNodeByKind(workspace: CanvasWorkspace, kind: CanvasLabNodeKind) {
+  return workspace.nodes.find((node) => node.kind === kind) || null
+}
+
+function canConnectCanvasNodes(sourceKind: CanvasLabNodeKind, targetKind: CanvasLabNodeKind) {
+  return CONNECTION_RULES[sourceKind]?.includes(targetKind) || false
+}
+
+function isPackagingOutputNodeKind(kind: CanvasLabNodeKind): kind is PackagingOutputNodeKind {
+  return AUTOMATIC_PACKAGING_NODE_KINDS.has(kind as PackagingOutputNodeKind)
+}
+
+function getTranscriptSourceConfig(node: CanvasNode | null) {
+  if (!node || node.kind !== 'transcript_source') return null
+  return node.config as CanvasNodeConfigMap['transcript_source']
+}
+
+function getSelectedPackagingOutputKinds(config: CanvasNodeConfigMap['transcript_source']) {
+  return PACKAGING_OUTPUT_NODE_KINDS.filter((kind) => config.selectedOutputs[kind]?.enabled)
+}
+
+function getPackagingSelectionCount(config: CanvasNodeConfigMap['transcript_source'], kind: PackagingOutputNodeKind) {
+  return config.selectedOutputs[kind]?.count || createDefaultPackagingOutputSelections()[kind].count
+}
+
+function orderWorkspaceNodes(nodes: CanvasNode[]) {
+  return [...nodes].sort((left, right) => {
+    if (left.position.x === right.position.x) {
+      return left.position.y - right.position.y
+    }
+    return left.position.x - right.position.x
+  })
+}
+
+function getNextNodePosition(workspace: CanvasWorkspace, kind: CanvasLabNodeKind) {
+  const base = getDefaultCanvasPosition(kind)
+  const existing = workspace.nodes.find((node) => node.kind === kind)
+  if (existing) return existing.position
+
+  const kindCount = workspace.nodes.filter((node) => node.kind === kind).length
+  return {
+    x: base.x + kindCount * 32,
+    y: base.y + kindCount * 24,
+  }
+}
+
+function ensureNodeInWorkspace(
+  workspace: CanvasWorkspace,
+  kind: CanvasLabNodeKind,
+  settings = useSettingsStore.getState().settings,
+) {
+  const existing = getNodeByKind(workspace, kind)
+  if (existing) return { workspace, node: existing }
+
+  const nextNode = createCanvasNode(kind, settings)
+  const position = getNextNodePosition(workspace, kind)
+  nextNode.position = position
+
+  const nextWorkspace = {
+    ...workspace,
+    nodes: orderWorkspaceNodes([...workspace.nodes, nextNode]),
+    updatedAt: Date.now(),
+  }
+
+  return { workspace: nextWorkspace, node: nextNode }
+}
+
+function withDefaultEdges(workspace: CanvasWorkspace) {
+  const nodeIdByKind = Object.fromEntries(workspace.nodes.map((node) => [node.kind, node.id])) as Partial<Record<CanvasLabNodeKind, string>>
+  const defaultEdges = buildDefaultEdges(nodeIdByKind)
+  const seen = new Set(workspace.edges.map((edge) => `${edge.source}:${edge.target}`))
+  const extraEdges = defaultEdges.filter((edge) => !seen.has(`${edge.source}:${edge.target}`))
+  if (extraEdges.length === 0) return workspace
+  return {
+    ...workspace,
+    edges: [...workspace.edges, ...extraEdges],
+    updatedAt: Date.now(),
+  }
+}
+
+function ensureTranscriptOutputNodes(
+  workspace: CanvasWorkspace,
+  outputKinds: PackagingOutputNodeKind[],
+) {
+  let nextWorkspace = workspace
+  const transcriptConfig = getTranscriptSourceConfig(getNodeByKind(workspace, 'transcript_source'))
+  for (const kind of outputKinds) {
+    nextWorkspace = ensureNodeInWorkspace(nextWorkspace, kind).workspace
+  }
+
+  if (transcriptConfig) {
+    nextWorkspace = {
+      ...nextWorkspace,
+      nodes: nextWorkspace.nodes.map((node) =>
+        isPackagingOutputNodeKind(node.kind)
+          ? {
+              ...node,
+              config: {
+                ...(node.config as CanvasNodeConfigMap['titles']),
+                requestedCount: getPackagingSelectionCount(transcriptConfig, node.kind),
+              },
+            }
+          : node,
+      ),
+      updatedAt: Date.now(),
+    }
+  }
+
+  return withDefaultEdges(nextWorkspace)
+}
+
+function ensureManualNode(
+  workspace: CanvasWorkspace,
+  kind: Extract<CanvasLabNodeKind, 'chat' | 'image_prompt' | 'image_generate' | 'asset_library' | 'compose'>,
+) {
+  return withDefaultEdges(ensureNodeInWorkspace(workspace, kind).workspace)
+}
+
+function getConnectionErrorMessage(
+  workspace: CanvasWorkspace,
+  sourceId: string,
+  targetId: string,
+) {
+  const sourceNode = getNodeById(workspace, sourceId)
+  const targetNode = getNodeById(workspace, targetId)
+
+  if (!sourceNode || !targetNode) {
+    return 'Canvas Lab could not find one of the selected nodes.'
+  }
+
+  if (sourceNode.id === targetNode.id) {
+    return 'A node cannot connect to itself.'
+  }
+
+  if (workspace.edges.some((edge) => edge.source === sourceId && edge.target === targetId)) {
+    return `${sourceNode.label} is already connected to ${targetNode.label}.`
+  }
+
+  if (!canConnectCanvasNodes(sourceNode.kind, targetNode.kind)) {
+    const allowedTargets = CONNECTION_RULES[sourceNode.kind] || []
+    const allowedLabels = allowedTargets
+      .map((kind) => workspace.nodes.find((node) => node.kind === kind)?.label || kind)
+      .join(', ')
+
+    return allowedLabels
+      ? `${sourceNode.label} cannot connect to ${targetNode.label}. Allowed targets: ${allowedLabels}.`
+      : `${sourceNode.label} cannot connect to ${targetNode.label}.`
+  }
+
+  return null
+}
+
 function markDescendantsStale(workspace: CanvasWorkspace, nodeId: string) {
   const queue = [...getOutgoingNodeIds(workspace, nodeId)]
   const seen = new Set<string>()
@@ -267,7 +510,7 @@ function collectAncestorArtifacts(workspace: CanvasWorkspace, nodeId: string) {
   }
 }
 
-function formatBriefArtifactContent(config: CanvasNodeConfigMap['packaging_brief']) {
+function formatBriefArtifactContent(config: PackagingBriefConfig) {
   return [
     config.mustInclude ? `Must include: ${config.mustInclude}` : null,
     config.niceToInclude ? `Nice to include: ${config.niceToInclude}` : null,
@@ -275,11 +518,22 @@ function formatBriefArtifactContent(config: CanvasNodeConfigMap['packaging_brief
     config.includeName && config.nameForTitles
       ? `Use name in titles: ${config.nameForTitles}`
       : null,
-    config.additionalContext ? `Additional context: ${config.additionalContext}` : null,
+    config.additionalContext ? `Packaging directions: ${config.additionalContext}` : null,
     `Transcript timestamps preferred: ${config.transcriptIncludeTimestamps ? 'yes' : 'no'}`,
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+function hasBriefConfigContent(config: PackagingBriefConfig) {
+  return Boolean(
+    config.mustInclude.trim() ||
+      config.niceToInclude.trim() ||
+      config.avoidWords.trim() ||
+      config.additionalContext.trim() ||
+      (config.includeName && config.nameForTitles.trim()) ||
+      !config.transcriptIncludeTimestamps,
+  )
 }
 
 function describeComposeItems(items: ComposeItem[], assetsById: Record<string, CanvasAsset>) {
@@ -347,9 +601,7 @@ function synchronizeNodeArtifacts(
         }),
       )
     }
-  }
 
-  if (node.kind === 'packaging_brief') {
     const existing = nextArtifacts.find(
       (artifact) => artifact.nodeId === node.id && artifact.kind === 'brief',
     )
@@ -358,7 +610,8 @@ function synchronizeNodeArtifacts(
         nodeId: node.id,
         kind: 'brief',
         label: 'Packaging brief',
-        content: formatBriefArtifactContent(node.config as CanvasNodeConfigMap['packaging_brief']),
+        content: formatBriefArtifactContent(config.brief),
+        items: [],
       }),
     )
   }
@@ -425,12 +678,16 @@ function synchronizeNodeArtifacts(
 
 function artifactKindForNode(kind: CanvasLabNodeKind): Artifact['kind'] | null {
   switch (kind) {
+    case 'core_hook':
+      return 'core_hook'
+    case 'description':
+      return 'description'
     case 'titles':
       return 'title_suggestions'
-    case 'summary':
-      return 'summary'
     case 'chapters':
       return 'chapter_list'
+    case 'hashtags':
+      return 'hashtags'
     case 'thumbnail_copy':
       return 'thumbnail_copy'
     case 'image_prompt':
@@ -446,12 +703,16 @@ function artifactKindForNode(kind: CanvasLabNodeKind): Artifact['kind'] | null {
 
 function labelForGeneratedArtifact(node: CanvasNode) {
   switch (node.kind) {
+    case 'core_hook':
+      return 'Core hook'
+    case 'description':
+      return 'Description'
     case 'titles':
       return 'Generated titles'
-    case 'summary':
-      return 'Summary'
     case 'chapters':
       return 'Chapter list'
+    case 'hashtags':
+      return 'Hashtags'
     case 'thumbnail_copy':
       return 'Thumbnail copy'
     case 'image_prompt':
@@ -508,9 +769,125 @@ function extractTranscript(ancestorNodes: CanvasNode[]) {
 }
 
 function extractBrief(ancestorNodes: CanvasNode[]) {
-  const briefNode = ancestorNodes.find((node) => node.kind === 'packaging_brief')
-  if (!briefNode) return null
-  return briefNode.config as CanvasNodeConfigMap['packaging_brief']
+  const sourceNode = ancestorNodes.find((node) => node.kind === 'transcript_source')
+  if (!sourceNode) return null
+  return (sourceNode.config as CanvasNodeConfigMap['transcript_source']).brief
+}
+
+function extractSelectedOutputs(ancestorNodes: CanvasNode[]) {
+  const sourceNode = ancestorNodes.find((node) => node.kind === 'transcript_source')
+  if (!sourceNode) return null
+  return (sourceNode.config as CanvasNodeConfigMap['transcript_source']).selectedOutputs
+}
+
+function getTranscriptSourceNode(ancestorNodes: CanvasNode[]) {
+  return ancestorNodes.find((node) => node.kind === 'transcript_source') || null
+}
+
+function hasTranscriptContent(node: CanvasNode | null) {
+  if (!node || node.kind !== 'transcript_source') return false
+  const config = node.config as CanvasNodeConfigMap['transcript_source']
+  return Boolean(config.transcript.trim())
+}
+
+function hasImagePromptArtifact(artifacts: Artifact[]) {
+  return artifacts.some((artifact) => {
+    if (artifact.kind !== 'image_prompt') return false
+    if (artifact.content?.trim()) return true
+    return artifact.items.some((item) => item.text.trim())
+  })
+}
+
+function hasImagePromptContext(artifacts: Artifact[], transcriptNode: CanvasNode | null) {
+  if (hasTranscriptContent(transcriptNode)) {
+    return true
+  }
+
+  return artifacts.some((artifact) => {
+    if (artifact.kind === 'title_suggestions' || artifact.kind === 'thumbnail_copy') {
+      return artifact.items.some((item) => item.text.trim())
+    }
+
+    return artifact.kind === 'transcript_digest' || artifact.kind === 'key_hooks'
+      ? Boolean(artifact.content?.trim())
+      : false
+  })
+}
+
+function getNodeExecutionError(
+  node: CanvasNode,
+  ancestorNodes: CanvasNode[],
+  artifacts: Artifact[],
+  options?: { requestedCount?: number; message?: string },
+) {
+  const transcriptNode = getTranscriptSourceNode(ancestorNodes)
+
+  switch (node.kind) {
+    case 'transcript_source':
+      if (!hasTranscriptContent(node)) {
+        return 'Paste a transcript into Transcript Source before running packaging.'
+      }
+      if (getSelectedPackagingOutputKinds(node.config as CanvasNodeConfigMap['transcript_source']).length === 0) {
+        return 'Select at least one packaging output before running Transcript Source.'
+      }
+      return null
+    case 'core_hook':
+    case 'description':
+    case 'titles':
+    case 'chapters':
+    case 'hashtags':
+    case 'thumbnail_copy':
+      if (!transcriptNode) {
+        return `Connect Transcript Source to ${node.label} before running it.`
+      }
+      if (!hasTranscriptContent(transcriptNode)) {
+        return `Paste a transcript into Transcript Source before running ${node.label}.`
+      }
+      return null
+    case 'image_prompt':
+      if (!hasImagePromptContext(artifacts, transcriptNode)) {
+        return 'Connect Transcript Source, Titles, or Thumbnail Copy to Image Prompt before running it.'
+      }
+      return null
+    case 'image_generate':
+      if (!hasImagePromptArtifact(artifacts)) {
+        return 'Connect Image Prompt to Image Gen and run Image Prompt first.'
+      }
+      return null
+    case 'chat':
+      if (!options?.message?.trim()) {
+        return 'Enter a prompt in the Chat node before running it.'
+      }
+      return null
+    default:
+      return null
+  }
+}
+
+function getRunProvider(node: CanvasNode): NodeRun['provider'] {
+  if (node.kind === 'image_generate') {
+    return 'gemini'
+  }
+
+  if (node.kind === 'chat') {
+    return (node.config as CanvasNodeConfigMap['chat']).provider === 'anthropic'
+      ? 'anthropic'
+      : 'openai'
+  }
+
+  return 'openai'
+}
+
+function getRunModel(node: CanvasNode) {
+  if (node.kind === 'chat') {
+    return (node.config as CanvasNodeConfigMap['chat']).model
+  }
+
+  if (node.kind === 'image_generate') {
+    return (node.config as CanvasNodeConfigMap['image_generate']).model
+  }
+
+  return 'gpt-5.2'
 }
 
 function extractImagePromptFromArtifacts(artifacts: Artifact[]) {
@@ -532,6 +909,45 @@ function collectReferencedAssetIds(artifacts: Artifact[]) {
     }
   }
   return [...assetIds]
+}
+
+function toArtifactItems(payload: CanvasExecutionOutputPayload | undefined) {
+  return (payload?.items || []).map((item) => ({
+    id: generateId(),
+    text: item.text,
+    secondaryText: item.secondaryText,
+    meta: item.meta,
+  }))
+}
+
+function upsertGeneratedArtifactForNode(
+  workspace: CanvasWorkspace,
+  node: CanvasNode,
+  payload: CanvasExecutionOutputPayload | undefined,
+) {
+  const artifactKind = artifactKindForNode(node.kind)
+  if (!artifactKind || !payload) return workspace
+
+  const existingArtifact = workspace.artifacts.find(
+    (artifact) => artifact.nodeId === node.id && artifact.kind === artifactKind,
+  )
+
+  const nextArtifact = upsertArtifactItems(existingArtifact, {
+    nodeId: node.id,
+    kind: artifactKind,
+    label: labelForGeneratedArtifact(node),
+    content: payload.content,
+    items: toArtifactItems(payload),
+  })
+
+  return {
+    ...workspace,
+    artifacts: [
+      ...workspace.artifacts.filter((artifact) => artifact.id !== existingArtifact?.id),
+      nextArtifact,
+    ].sort((left, right) => left.createdAt - right.createdAt),
+    updatedAt: Date.now(),
+  }
 }
 
 function withWorkspaceUpdate(
@@ -562,6 +978,7 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
   activeWorkspaceId: loadActiveWorkspaceId(),
   selectedNodeId: null,
   openComposeNodeId: null,
+  openDebugNodeId: null,
 
   hydrate: async () => {
     if (get().isHydrated) return
@@ -606,6 +1023,7 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
           workspaces: nextWorkspaces,
           assetsById,
           activeWorkspaceId,
+          openDebugNodeId: null,
         })
       } catch (error) {
         set({
@@ -633,6 +1051,7 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
       activeWorkspaceId: workspace.id,
       selectedNodeId: null,
       openComposeNodeId: null,
+      openDebugNodeId: null,
     }))
     saveActiveWorkspaceId(workspace.id)
     return workspace.id
@@ -658,6 +1077,7 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
         Object.entries(state.assetsById).filter(([, asset]) => asset.workspaceId !== workspaceId),
       ),
       selectedNodeId: null,
+      openDebugNodeId: null,
       openComposeNodeId:
         state.openComposeNodeId && nextWorkspaces.some((workspace) => workspace.nodes.some((node) => node.id === state.openComposeNodeId))
           ? state.openComposeNodeId
@@ -691,6 +1111,7 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
       activeWorkspaceId: workspaceId,
       selectedNodeId: null,
       openComposeNodeId: null,
+      openDebugNodeId: null,
     })
     saveActiveWorkspaceId(workspaceId)
   },
@@ -701,6 +1122,17 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
 
   setOpenComposeNodeId: (nodeId) => {
     set({ openComposeNodeId: nodeId })
+  },
+
+  setOpenDebugNodeId: (nodeId) => {
+    set({ openDebugNodeId: nodeId })
+  },
+
+  addNode: async (kind) => {
+    const state = get()
+    if (!MANUAL_NODE_KINDS.includes(kind)) return
+
+    withWorkspaceUpdate(state, set, (workspace) => ensureManualNode(workspace, kind))
   },
 
   applyFlowNodeChanges: async (changes) => {
@@ -740,6 +1172,17 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
 
     const state = get()
     withWorkspaceUpdate(state, set, (workspace) => {
+      const errorMessage = getConnectionErrorMessage(
+        workspace,
+        connection.source!,
+        connection.target!,
+      )
+
+      if (errorMessage) {
+        toast.error(errorMessage)
+        return workspace
+      }
+
       const nextFlowEdges = addEdge(
         {
           ...connection,
@@ -760,7 +1203,7 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
   updateNodeConfig: async (nodeId, updater) => {
     const state = get()
     withWorkspaceUpdate(state, set, (workspace) => {
-      const nextNodes = workspace.nodes.map((node) => {
+      let nextNodes = workspace.nodes.map((node) => {
         if (node.id !== nodeId) return node
         return {
           ...node,
@@ -768,6 +1211,22 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
           updatedAt: Date.now(),
         }
       })
+
+      const updatedNode = nextNodes.find((node) => node.id === nodeId)
+      if (updatedNode?.kind === 'transcript_source') {
+        const transcriptConfig = updatedNode.config as CanvasNodeConfigMap['transcript_source']
+        nextNodes = nextNodes.map((node) => {
+          if (!isPackagingOutputNodeKind(node.kind)) return node
+          return {
+            ...node,
+            config: {
+              ...(node.config as CanvasNodeConfigMap['titles']),
+              requestedCount: getPackagingSelectionCount(transcriptConfig, node.kind),
+            },
+            updatedAt: Date.now(),
+          }
+        })
+      }
 
       let nextWorkspace: CanvasWorkspace = {
         ...workspace,
@@ -831,10 +1290,62 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
 
   executeNode: async (nodeId, options) => {
     const state = get()
-    const workspace = getActiveWorkspace(state)
+    let workspace = getActiveWorkspace(state)
     if (!workspace) return
     const node = workspace.nodes.find((entry) => entry.id === nodeId)
     if (!node) return
+
+    if (node.kind === 'transcript_source') {
+      workspace = synchronizeNodeArtifacts(workspace, nodeId, state.assetsById)
+    }
+
+    const { ancestorNodes, artifacts } = collectAncestorArtifacts(workspace, nodeId)
+    const executionError = getNodeExecutionError(node, ancestorNodes, artifacts, options)
+    if (executionError) {
+      const runId = generateId()
+      const failedRun: NodeRun = {
+        id: runId,
+        nodeId,
+        status: 'error',
+        startedAt: Date.now(),
+        completedAt: Date.now(),
+        provider: getRunProvider(node),
+        model: getRunModel(node),
+        requestedCount: options?.requestedCount,
+        error: executionError,
+      }
+
+      withWorkspaceUpdate(state, set, (currentWorkspace) => ({
+        ...currentWorkspace,
+        nodes: currentWorkspace.nodes.map((entry) =>
+          entry.id === nodeId
+            ? {
+                ...entry,
+                status: 'error',
+                lastRunId: runId,
+                updatedAt: Date.now(),
+              }
+            : entry,
+        ),
+        runs: [failedRun, ...currentWorkspace.runs],
+        updatedAt: Date.now(),
+      }))
+      toast.error(executionError)
+      return
+    }
+
+    const transcript =
+      node.kind === 'transcript_source'
+        ? (node.config as CanvasNodeConfigMap['transcript_source']).artifacts
+        : extractTranscript(ancestorNodes)
+    const brief =
+      node.kind === 'transcript_source'
+        ? (node.config as CanvasNodeConfigMap['transcript_source']).brief
+        : extractBrief(ancestorNodes)
+    const selectedOutputs =
+      node.kind === 'transcript_source'
+        ? (node.config as CanvasNodeConfigMap['transcript_source']).selectedOutputs
+        : extractSelectedOutputs(ancestorNodes)
 
     const threadMessages = getNodeThreadMessages(workspace, nodeId)
     const nextUserMessage =
@@ -848,55 +1359,67 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
       nodeId,
       status: 'running',
       startedAt: Date.now(),
-      provider: node.kind === 'image_generate' ? 'gemini' : node.kind === 'chat'
-        ? ((node.config as CanvasNodeConfigMap['chat']).provider === 'anthropic' ? 'anthropic' : 'openai')
-        : 'openai',
-      model:
-        node.kind === 'chat'
-          ? (node.config as CanvasNodeConfigMap['chat']).model
-          : node.kind === 'image_generate'
-          ? (node.config as CanvasNodeConfigMap['image_generate']).model
-          : 'gpt-5.2',
+      provider: getRunProvider(node),
+      model: getRunModel(node),
       requestedCount: options?.requestedCount,
+      sourceRunId:
+        node.kind !== 'transcript_source'
+          ? getTranscriptSourceNode(ancestorNodes)?.lastRunId
+          : undefined,
     }
 
-    let runningWorkspace = withWorkspaceUpdate(state, set, (currentWorkspace) => ({
-      ...currentWorkspace,
-      nodes: currentWorkspace.nodes.map((entry) =>
-        entry.id === nodeId
-          ? {
+    const selectedOutputKinds =
+      node.kind === 'transcript_source'
+        ? getSelectedPackagingOutputKinds(node.config as CanvasNodeConfigMap['transcript_source'])
+        : []
+
+    let runningWorkspace = withWorkspaceUpdate(state, set, (currentWorkspace) => {
+      let nextWorkspace = currentWorkspace
+
+      if (node.kind === 'transcript_source') {
+        nextWorkspace = ensureTranscriptOutputNodes(nextWorkspace, selectedOutputKinds)
+      }
+
+      nextWorkspace = synchronizeNodeArtifacts(nextWorkspace, nodeId, state.assetsById)
+
+      return {
+        ...nextWorkspace,
+        nodes: nextWorkspace.nodes.map((entry) => {
+          if (entry.id === nodeId || (node.kind === 'transcript_source' && selectedOutputKinds.includes(entry.kind as PackagingOutputNodeKind))) {
+            return {
               ...entry,
               status: 'running',
-              lastRunId: runId,
+              lastRunId: entry.id === nodeId ? runId : entry.lastRunId,
               updatedAt: Date.now(),
             }
-          : entry,
-      ),
-      runs: [run, ...currentWorkspace.runs],
-      threadMessages: nextUserMessage
-        ? [...currentWorkspace.threadMessages, nextUserMessage]
-        : currentWorkspace.threadMessages,
-      updatedAt: Date.now(),
-    }))
+          }
+
+          return entry
+        }),
+        runs: [run, ...nextWorkspace.runs],
+        threadMessages: nextUserMessage
+          ? [...nextWorkspace.threadMessages, nextUserMessage]
+          : nextWorkspace.threadMessages,
+        updatedAt: Date.now(),
+      }
+    })
 
     if (!runningWorkspace) return
 
     const activeNode = runningWorkspace.nodes.find((entry) => entry.id === nodeId)
     if (!activeNode) return
 
-    const { ancestorNodes, artifacts } = collectAncestorArtifacts(runningWorkspace, nodeId)
-    const transcript = extractTranscript(ancestorNodes)
-    const brief = extractBrief(ancestorNodes)
-
     const request: Omit<CanvasExecuteNodeRequest, 'packagingModel'> = {
       nodeKind: activeNode.kind,
       nodeLabel: activeNode.label,
       requestedCount:
         options?.requestedCount ||
-        (activeNode.kind === 'titles' ||
+        (activeNode.kind === 'core_hook' ||
+        activeNode.kind === 'description' ||
+        activeNode.kind === 'titles' ||
         activeNode.kind === 'thumbnail_copy' ||
         activeNode.kind === 'chapters' ||
-        activeNode.kind === 'summary' ||
+        activeNode.kind === 'hashtags' ||
         activeNode.kind === 'image_prompt'
           ? (activeNode.config as CanvasNodeConfigMap['titles']).requestedCount
           : undefined),
@@ -906,7 +1429,18 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
       })),
       transcript: transcript || undefined,
       brief: brief || undefined,
-      artifacts: toRequestArtifacts(artifacts),
+      selectedOutputs:
+        activeNode.kind === 'transcript_source'
+          ? selectedOutputs || undefined
+          : undefined,
+      sourceRunId:
+        activeNode.kind !== 'transcript_source'
+          ? getTranscriptSourceNode(ancestorNodes)?.lastRunId || undefined
+          : undefined,
+      artifacts:
+        activeNode.kind === 'transcript_source'
+          ? []
+          : toRequestArtifacts(artifacts),
     }
 
     if (activeNode.kind === 'chat') {
@@ -953,13 +1487,110 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
       const response = await requestCanvasNodeExecution(request)
 
       const assistantPreview =
-        response.content?.trim() ||
-        response.items?.slice(0, 2).map((item) => item.text).join(' · ') ||
-        `${activeNode.label} updated`
+        activeNode.kind === 'transcript_source'
+          ? `${selectedOutputKinds.length} packaging output${selectedOutputKinds.length === 1 ? '' : 's'} updated`
+          : response.content?.trim() ||
+            response.items?.slice(0, 2).map((item) => item.text).join(' · ') ||
+            `${activeNode.label} updated`
 
       const assistantMessage = createThreadMessage(nodeId, 'assistant', assistantPreview)
       const nextAssetRecords: StoredCanvasAsset[] = []
       const nextArtifactItems: ArtifactItem[] = []
+
+      if (activeNode.kind === 'transcript_source') {
+        const outputRunIds = Object.fromEntries(
+          selectedOutputKinds.map((kind) => [kind, generateId()]),
+        ) as Record<PackagingOutputNodeKind, string>
+
+        withWorkspaceUpdate(get(), set, (currentWorkspace) => {
+          let nextWorkspace = currentWorkspace
+
+          nextWorkspace = {
+            ...nextWorkspace,
+            nodes: nextWorkspace.nodes.map((entry) => {
+              if (entry.id === nodeId) {
+                return {
+                  ...entry,
+                  status: 'complete',
+                  lastRunId: runId,
+                  updatedAt: Date.now(),
+                }
+              }
+
+              if (selectedOutputKinds.includes(entry.kind as PackagingOutputNodeKind)) {
+                return {
+                  ...entry,
+                  status: 'complete',
+                  lastRunId: outputRunIds[entry.kind as PackagingOutputNodeKind],
+                  updatedAt: Date.now(),
+                }
+              }
+
+              return entry
+            }),
+            runs: nextWorkspace.runs.map((entry) =>
+              entry.id === runId
+                ? {
+                    ...entry,
+                    status: 'complete',
+                    completedAt: Date.now(),
+                    provider: response.provider,
+                    model: response.model,
+                    warnings: response.warnings,
+                    requestPreview: response.requestPreview,
+                    responsePreview: response.responsePreview,
+                  }
+                : entry,
+            ),
+            threadMessages: [...nextWorkspace.threadMessages, assistantMessage],
+            updatedAt: Date.now(),
+          }
+
+          nextWorkspace = {
+            ...nextWorkspace,
+            runs: [
+              ...selectedOutputKinds.map((kind) => ({
+                id: outputRunIds[kind],
+                nodeId: getNodeByKind(nextWorkspace, kind)?.id || '',
+                status: 'complete' as const,
+                startedAt: Date.now(),
+                completedAt: Date.now(),
+                provider: response.provider,
+                model: response.model,
+                requestedCount: selectedOutputs?.[kind]?.count,
+                requestPreview: response.requestPreview,
+                responsePreview: JSON.stringify(response.outputs?.[kind] || {}, null, 2),
+                sourceRunId: runId,
+              })).filter((entry) => entry.nodeId),
+              ...nextWorkspace.runs,
+            ],
+          }
+
+          nextWorkspace = synchronizeNodeArtifacts(nextWorkspace, nodeId, get().assetsById)
+
+          for (const outputKind of selectedOutputKinds) {
+            const outputNode = getNodeByKind(nextWorkspace, outputKind)
+            if (!outputNode) continue
+            nextWorkspace = upsertGeneratedArtifactForNode(
+              nextWorkspace,
+              outputNode,
+              response.outputs?.[outputKind],
+            )
+          }
+
+          for (const outputKind of selectedOutputKinds) {
+            const outputNode = getNodeByKind(nextWorkspace, outputKind)
+            if (!outputNode) continue
+            nextWorkspace = markDescendantsStale(nextWorkspace, outputNode.id)
+          }
+
+          return nextWorkspace
+        })
+        return
+      }
+
+      const outputSourceRunId = getTranscriptSourceNode(ancestorNodes)?.lastRunId
+      const assistantRefinementMessage = createThreadMessage(nodeId, 'assistant', assistantPreview)
 
       if (activeNode.kind === 'image_generate' && response.items) {
         for (const item of response.items) {
@@ -1007,8 +1638,6 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
 
       set({ assetsById: nextAssetsById })
 
-      const artifactKind = artifactKindForNode(activeNode.kind)
-
       withWorkspaceUpdate(get(), set, (currentWorkspace) => {
         let nextWorkspace: CanvasWorkspace = {
           ...currentWorkspace,
@@ -1031,13 +1660,17 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
                   provider: response.provider,
                   model: response.model,
                   warnings: response.warnings,
+                  requestPreview: response.requestPreview,
+                  responsePreview: response.responsePreview,
+                  sourceRunId: outputSourceRunId || entry.sourceRunId,
                 }
               : entry,
           ),
-          threadMessages: [...currentWorkspace.threadMessages, assistantMessage],
+          threadMessages: [...currentWorkspace.threadMessages, assistantRefinementMessage],
           updatedAt: Date.now(),
         }
 
+        const artifactKind = artifactKindForNode(activeNode.kind)
         if (artifactKind) {
           const existingArtifact = currentWorkspace.artifacts.find(
             (artifact) => artifact.nodeId === nodeId && artifact.kind === artifactKind,
@@ -1069,11 +1702,11 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
       withWorkspaceUpdate(get(), set, (currentWorkspace) => ({
         ...currentWorkspace,
         nodes: currentWorkspace.nodes.map((entry) =>
-          entry.id === nodeId
+          entry.id === nodeId || (node.kind === 'transcript_source' && selectedOutputKinds.includes(entry.kind as PackagingOutputNodeKind))
             ? {
                 ...entry,
                 status: 'error',
-                lastRunId: runId,
+                lastRunId: entry.id === nodeId ? runId : entry.lastRunId,
                 updatedAt: Date.now(),
               }
             : entry,
@@ -1099,34 +1732,30 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
     const workspace = getActiveWorkspace(state)
     if (!workspace) return
     const packaging = usePackagingSessionStore.getState().userInputs
+    const selectedOutputs = loadPackagingOutputSelections()
 
     withWorkspaceUpdate(state, set, (currentWorkspace) => {
-      const nextNodes = currentWorkspace.nodes.map((node) => {
+      let nextNodes = currentWorkspace.nodes.map((node) => {
         if (node.kind === 'transcript_source') {
           const artifacts = deriveTranscriptArtifacts(packaging.transcript)
+          const brief: PackagingBriefConfig = {
+            mustInclude: packaging.mustInclude,
+            niceToInclude: packaging.niceToInclude,
+            avoidWords: packaging.avoidWords,
+            includeName: packaging.includeName,
+            nameForTitles: packaging.nameForTitles,
+            additionalContext: packaging.additionalContext,
+            transcriptIncludeTimestamps: packaging.transcriptIncludeTimestamps,
+          }
+
           return {
             ...node,
-            status: packaging.transcript.trim() ? 'complete' : 'idle',
+            status: packaging.transcript.trim() || hasBriefConfigContent(brief) ? 'complete' : 'idle',
             config: {
               transcript: packaging.transcript,
               artifacts,
-            },
-            updatedAt: Date.now(),
-          }
-        }
-
-        if (node.kind === 'packaging_brief') {
-          return {
-            ...node,
-            status: 'complete',
-            config: {
-              mustInclude: packaging.mustInclude,
-              niceToInclude: packaging.niceToInclude,
-              avoidWords: packaging.avoidWords,
-              includeName: packaging.includeName,
-              nameForTitles: packaging.nameForTitles,
-              additionalContext: packaging.additionalContext,
-              transcriptIncludeTimestamps: packaging.transcriptIncludeTimestamps,
+              brief,
+              selectedOutputs,
             },
             updatedAt: Date.now(),
           }
@@ -1135,18 +1764,29 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
         return node
       })
 
+      nextNodes = nextNodes.map((node) =>
+        isPackagingOutputNodeKind(node.kind)
+          ? {
+              ...node,
+              config: {
+                ...(node.config as CanvasNodeConfigMap['titles']),
+                requestedCount: selectedOutputs[node.kind].count,
+              },
+            }
+          : node,
+      )
+
       let nextWorkspace: CanvasWorkspace = {
         ...currentWorkspace,
         nodes: nextNodes,
         updatedAt: Date.now(),
       }
       nextWorkspace = synchronizeNodeArtifacts(
-        synchronizeNodeArtifacts(nextWorkspace, nextNodes.find((node) => node.kind === 'transcript_source')?.id || '', state.assetsById),
-        nextNodes.find((node) => node.kind === 'packaging_brief')?.id || '',
+        nextWorkspace,
+        nextNodes.find((node) => node.kind === 'transcript_source')?.id || '',
         state.assetsById,
       )
       nextWorkspace = markDescendantsStale(nextWorkspace, nextNodes.find((node) => node.kind === 'transcript_source')?.id || '')
-      nextWorkspace = markDescendantsStale(nextWorkspace, nextNodes.find((node) => node.kind === 'packaging_brief')?.id || '')
       return nextWorkspace
     })
 
@@ -1174,26 +1814,29 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
       )
       .slice(-8)
 
-    const chatNode = workspace.nodes.find((node) => node.kind === 'chat')
-    if (!chatNode) return
+    withWorkspaceUpdate(state, set, (currentWorkspace) => {
+      const nextWorkspace = ensureManualNode(currentWorkspace, 'chat')
+      const chatNode = nextWorkspace.nodes.find((node) => node.kind === 'chat')
+      if (!chatNode) return currentWorkspace
 
-    withWorkspaceUpdate(state, set, (currentWorkspace) => ({
-      ...currentWorkspace,
-      threadMessages: [
-        ...currentWorkspace.threadMessages.filter((message) => message.nodeId !== chatNode.id),
-        ...chatMessages.map((message) => createThreadMessage(chatNode.id, message.role, message.text)),
-      ],
-      nodes: currentWorkspace.nodes.map((node) =>
-        node.id === chatNode.id
-          ? {
-              ...node,
-              status: 'complete',
-              updatedAt: Date.now(),
-            }
-          : node,
-      ),
-      updatedAt: Date.now(),
-    }))
+      return {
+        ...nextWorkspace,
+        threadMessages: [
+          ...nextWorkspace.threadMessages.filter((message) => message.nodeId !== chatNode.id),
+          ...chatMessages.map((message) => createThreadMessage(chatNode.id, message.role, message.text)),
+        ],
+        nodes: nextWorkspace.nodes.map((node) =>
+          node.id === chatNode.id
+            ? {
+                ...node,
+                status: 'complete',
+                updatedAt: Date.now(),
+              }
+            : node,
+        ),
+        updatedAt: Date.now(),
+      }
+    })
 
     toast.success('Active chat context imported into the Chat node.')
   },
@@ -1213,9 +1856,6 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
     const state = get()
     const workspace = getActiveWorkspace(state)
     if (!workspace) return
-
-    const assetLibraryNode = workspace.nodes.find((node) => node.kind === 'asset_library')
-    if (!assetLibraryNode) return
 
     const nextAssets: StoredCanvasAsset[] = reusableAssets.map((asset) => ({
       id: generateId(),
@@ -1241,10 +1881,14 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
     }))
 
     withWorkspaceUpdate(get(), set, (currentWorkspace) => {
+      const nextWorkspaceWithNode = ensureManualNode(currentWorkspace, 'asset_library')
+      const ensuredAssetLibraryNode = nextWorkspaceWithNode.nodes.find((node) => node.kind === 'asset_library')
+      if (!ensuredAssetLibraryNode) return currentWorkspace
+
       const nextWorkspace: CanvasWorkspace = {
-        ...currentWorkspace,
-        nodes: currentWorkspace.nodes.map((node) =>
-          node.id === assetLibraryNode.id
+        ...nextWorkspaceWithNode,
+        nodes: nextWorkspaceWithNode.nodes.map((node) =>
+          node.id === ensuredAssetLibraryNode.id
             ? {
                 ...node,
                 status: 'complete',
@@ -1261,11 +1905,11 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
         updatedAt: Date.now(),
       }
 
-      const synced = synchronizeNodeArtifacts(nextWorkspace, assetLibraryNode.id, {
+      const synced = synchronizeNodeArtifacts(nextWorkspace, ensuredAssetLibraryNode.id, {
         ...get().assetsById,
         ...materializedAssets,
       })
-      return markDescendantsStale(synced, assetLibraryNode.id)
+      return markDescendantsStale(synced, ensuredAssetLibraryNode.id)
     })
 
     toast.success(`${nextAssets.length} reusable assets imported into Canvas Lab.`)
@@ -1605,6 +2249,19 @@ export function useCanvasNodeThread(nodeId: string | null) {
   return useMemo(() => {
     if (!workspace || !nodeId) return []
     return getNodeThreadMessages(workspace, nodeId)
+  }, [workspace, nodeId])
+}
+
+export function useCanvasNodeLatestRun(nodeId: string | null) {
+  const workspace = useActiveCanvasWorkspace()
+
+  return useMemo(() => {
+    if (!workspace || !nodeId) return null
+    return (
+      workspace.runs
+        .filter((run) => run.nodeId === nodeId)
+        .sort((a, b) => b.startedAt - a.startedAt)[0] || null
+    )
   }, [workspace, nodeId])
 }
 

@@ -4,6 +4,7 @@ import type {
   ImageGenerationModel,
   ImageSize,
 } from '../types/images'
+import { fetchApi } from './fetchApi'
 
 export interface GenerateImagesOptions {
   model: ImageGenerationModel
@@ -84,7 +85,7 @@ function buildRequestBody(options: GenerateImagesOptions): GenerateImagesRequest
 export async function requestGeneratedImages(
   options: GenerateImagesOptions
 ): Promise<GenerateImagesResult> {
-  const response = await fetch('/api/images/gemini', {
+  const response = await fetchApi('/api/images/gemini', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildRequestBody(options)),
