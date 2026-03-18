@@ -18,6 +18,9 @@ Active backlog with priority tiers, validation snapshot, and implementation stat
 ### [README.md](./README.md)
 Index and maintenance guidance for this planning folder.
 
+### [CANVAS-LAB-FOUNDATION-REBUILD-PLAN.md](./CANVAS-LAB-FOUNDATION-REBUILD-PLAN.md)
+Foundational rebuild plan for Canvas Lab UX and prompt-program architecture.
+
 ---
 
 ## Validation Reality Check (Feb 9, 2026)
