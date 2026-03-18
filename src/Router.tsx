@@ -16,7 +16,6 @@ import CanvasLabTool from './tools/canvas-lab/CanvasLabTool'
 import ImageGenerationTool from './tools/images/ImageGenerationTool'
 import PackagingTool from './tools/packaging/PackagingTool'
 import VideoScriptTool from './tools/script/VideoScriptTool'
-import ThumbnailStudioTool from './tools/thumbnail-studio/ThumbnailStudioTool'
 
 function HomeRedirect() {
   const { chats, activeChatId } = useChatStore()
@@ -83,7 +82,6 @@ export default function Router() {
           <Route path="comments" element={<CommentRepliesTool />} />
           <Route path="script" element={<VideoScriptTool />} />
           <Route path="canvas-lab" element={<CanvasLabTool />} />
-          <Route path="thumbnail-studio" element={<ThumbnailStudioTool />} />
           <Route path="chat" element={<ChatRoute />} />
           <Route path="chat/:chatId" element={<ChatRoute />} />
           <Route path="*" element={<Navigate to="/" replace />} />

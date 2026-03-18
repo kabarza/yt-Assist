@@ -14,6 +14,10 @@ import type {
   PackagingBriefConfig,
   PackagingOutputNodeKind,
   PackagingOutputSelectionMap,
+  PromptBuilderOutputDefinition,
+  PromptBuilderPresetId,
+  PromptOutputNodeConfig,
+  PromptOutputSpecSnapshot,
   TranscriptArtifacts,
 } from '@/types/canvasLab'
 import type { AppSettings } from '@/stores/settingsStore'
@@ -46,8 +50,15 @@ export const DEFAULT_PACKAGING_OUTPUT_SELECTIONS: PackagingOutputSelectionMap = 
   hashtags: { enabled: true, count: 5 },
 }
 
+const DUPLICATE_ALLOWED_NODE_KINDS = new Set<CanvasLabNodeKind>([
+  'prompt_builder',
+  'prompt_output',
+])
+
 const DEFAULT_NODE_LABELS: Record<CanvasLabNodeKind, string> = {
   transcript_source: 'Transcript Source',
+  prompt_builder: 'Prompt Builder',
+  prompt_output: 'Prompt Output',
   core_hook: 'Core Hook',
   description: 'Description',
   titles: 'Titles',
@@ -64,6 +75,8 @@ const DEFAULT_NODE_LABELS: Record<CanvasLabNodeKind, string> = {
 
 const LEGACY_DEFAULT_NODE_POSITIONS: Record<CanvasLabNodeKind, { x: number; y: number }> = {
   transcript_source: { x: 36, y: 70 },
+  prompt_builder: { x: 592, y: 120 },
+  prompt_output: { x: 964, y: 120 },
   core_hook: { x: 420, y: 36 },
   description: { x: 420, y: 268 },
   titles: { x: 420, y: 36 },
@@ -80,6 +93,8 @@ const LEGACY_DEFAULT_NODE_POSITIONS: Record<CanvasLabNodeKind, { x: number; y: n
 
 const DEFAULT_CANVAS_LAYOUT: Record<CanvasLabNodeKind, { x: number; y: number }> = {
   transcript_source: { x: 88, y: 80 },
+  prompt_builder: { x: 592, y: 120 },
+  prompt_output: { x: 964, y: 120 },
   core_hook: { x: 592, y: 36 },
   description: { x: 592, y: 308 },
   titles: { x: 964, y: 36 },
@@ -113,6 +128,115 @@ export function createEmptyTranscriptArtifacts(): TranscriptArtifacts {
 
 export function createDefaultPackagingOutputSelections(): PackagingOutputSelectionMap {
   return JSON.parse(JSON.stringify(DEFAULT_PACKAGING_OUTPUT_SELECTIONS)) as PackagingOutputSelectionMap
+}
+
+function createPromptOutputDefinition(
+  input?: Partial<PromptBuilderOutputDefinition>,
+): PromptBuilderOutputDefinition {
+  return {
+    outputId: input?.outputId || generateId(),
+    label: input?.label?.trim() || 'Output',
+    enabled: input?.enabled ?? true,
+    requestedCount: Math.max(1, Math.round(input?.requestedCount || 3)),
+    presentation: input?.presentation || 'rows',
+    promptHint: input?.promptHint || '',
+    outputType: input?.outputType || 'generic',
+  }
+}
+
+export function createPromptBuilderOutputsForPreset(
+  presetId: PromptBuilderPresetId,
+  selections = createDefaultPackagingOutputSelections(),
+): PromptBuilderOutputDefinition[] {
+  if (presetId === 'youtube_packaging') {
+    return [
+      createPromptOutputDefinition({
+        outputId: 'core_hook',
+        label: 'Core Hook',
+        requestedCount: selections.core_hook.count,
+        presentation: 'combined_block',
+        outputType: 'core_hook',
+      }),
+      createPromptOutputDefinition({
+        outputId: 'description',
+        label: 'Descriptions',
+        requestedCount: selections.description.count,
+        presentation: 'rows',
+        outputType: 'description',
+      }),
+      createPromptOutputDefinition({
+        outputId: 'titles',
+        label: 'Titles',
+        requestedCount: selections.titles.count,
+        presentation: 'rows',
+        outputType: 'titles',
+      }),
+      createPromptOutputDefinition({
+        outputId: 'thumbnail_copy',
+        label: 'Thumbnail Copy',
+        requestedCount: selections.thumbnail_copy.count,
+        presentation: 'rows',
+        outputType: 'thumbnail_copy',
+      }),
+      createPromptOutputDefinition({
+        outputId: 'chapters',
+        label: 'Chapters',
+        requestedCount: selections.chapters.count,
+        presentation: 'rows',
+        outputType: 'chapters',
+      }),
+      createPromptOutputDefinition({
+        outputId: 'hashtags',
+        label: 'Hashtags',
+        requestedCount: selections.hashtags.count,
+        presentation: 'combined_block',
+        outputType: 'hashtags',
+      }),
+    ]
+  }
+
+  return [
+    createPromptOutputDefinition({
+      label: 'Output',
+      requestedCount: 3,
+      presentation: 'rows',
+      outputType: 'generic',
+    }),
+  ]
+}
+
+export function createPromptBuilderConfig(
+  presetId: PromptBuilderPresetId = 'custom',
+  selections = createDefaultPackagingOutputSelections(),
+) {
+  return {
+    presetId,
+    sharedInstruction: '',
+    systemPrompt: '',
+    outputs: createPromptBuilderOutputsForPreset(presetId, selections),
+  } satisfies CanvasNodeConfigMap['prompt_builder']
+}
+
+function normalizePromptOutputSpecSnapshot(
+  input: unknown,
+  fallback?: Partial<PromptOutputSpecSnapshot>,
+): PromptOutputSpecSnapshot {
+  const record = isRecord(input) ? input : {}
+  return createPromptOutputDefinition({
+    outputId: getString(record.outputId, fallback?.outputId || generateId()),
+    label: getString(record.label, fallback?.label || 'Output'),
+    enabled: getBoolean(record.enabled, fallback?.enabled ?? true),
+    requestedCount: getFinitePositiveInteger(record.requestedCount, fallback?.requestedCount || 3),
+    presentation:
+      record.presentation === 'combined_block' || record.presentation === 'rows'
+        ? record.presentation
+        : fallback?.presentation || 'rows',
+    promptHint: getString(record.promptHint, fallback?.promptHint || ''),
+    outputType:
+      typeof record.outputType === 'string'
+        ? record.outputType as PromptOutputSpecSnapshot['outputType']
+        : fallback?.outputType || 'generic',
+  })
 }
 
 function normalizeWhitespace(value: string) {
@@ -320,6 +444,13 @@ function createDefaultNodeConfig(kind: CanvasLabNodeKind, settings: AppSettings)
         brief: { ...DEFAULT_PACKAGING_BRIEF },
         selectedOutputs: createDefaultPackagingOutputSelections(),
       }
+    case 'prompt_builder':
+      return createPromptBuilderConfig()
+    case 'prompt_output':
+      return {
+        builderNodeId: '',
+        ...createPromptOutputDefinition(),
+      } satisfies PromptOutputNodeConfig
     case 'core_hook':
     case 'description':
     case 'titles':
@@ -419,6 +550,29 @@ function normalizeNodeConfig(
         brief: normalizePackagingBriefConfig(briefSource),
         selectedOutputs: normalizePackagingOutputSelections(config.selectedOutputs),
       }
+    }
+    case 'prompt_builder': {
+      const presetId = config.presetId === 'youtube_packaging' ? 'youtube_packaging' : 'custom'
+      const fallback = createPromptBuilderConfig(presetId)
+      const outputs = Array.isArray(config.outputs)
+        ? config.outputs
+            .map((output) => normalizePromptOutputSpecSnapshot(output))
+            .filter((output, index, array) => array.findIndex((entry) => entry.outputId === output.outputId) === index)
+        : fallback.outputs
+
+      return {
+        presetId,
+        sharedInstruction: getString(config.sharedInstruction),
+        systemPrompt: getString(config.systemPrompt),
+        outputs: outputs.length > 0 ? outputs : fallback.outputs,
+      } satisfies CanvasNodeConfigMap['prompt_builder']
+    }
+    case 'prompt_output': {
+      const promptOutputFallback = fallback as CanvasNodeConfigMap['prompt_output']
+      return {
+        builderNodeId: getString(config.builderNodeId, promptOutputFallback.builderNodeId),
+        ...normalizePromptOutputSpecSnapshot(config, promptOutputFallback),
+      } satisfies CanvasNodeConfigMap['prompt_output']
     }
     case 'core_hook':
     case 'description':
@@ -566,6 +720,7 @@ function normalizeArtifacts(
       const nextArtifact = {
         id: getString(artifact.id, generateId()),
         nodeId,
+        outputId: getString(artifact.outputId, '') || undefined,
         kind: kind as Artifact['kind'],
         label,
         content: getString(artifact.content, '') || undefined,
@@ -574,11 +729,18 @@ function normalizeArtifacts(
               .map((item) => normalizeArtifactItem(item))
               .filter((item): item is ArtifactItem => Boolean(item))
           : [],
+        payload: 'payload' in artifact ? artifact.payload : undefined,
+        schemaVersion: typeof artifact.schemaVersion === 'number' && Number.isFinite(artifact.schemaVersion)
+          ? artifact.schemaVersion
+          : undefined,
+        outputSpecSnapshot: 'outputSpecSnapshot' in artifact
+          ? normalizePromptOutputSpecSnapshot(artifact.outputSpecSnapshot, getString(artifact.outputId, '') ? { outputId: getString(artifact.outputId) } : undefined)
+          : undefined,
         createdAt: getFiniteNumber(artifact.createdAt, Date.now()),
         updatedAt: getFiniteNumber(artifact.updatedAt, Date.now()),
       } satisfies Artifact
 
-      const artifactKey = `${nodeId}:${kind}`
+      const artifactKey = `${nodeId}:${kind}:${nextArtifact.outputId || ''}`
       const existingArtifact = artifactsByKey.get(artifactKey)
       if (!existingArtifact || nextArtifact.updatedAt >= existingArtifact.updatedAt) {
         artifactsByKey.set(artifactKey, nextArtifact)
@@ -601,6 +763,7 @@ function normalizeRuns(input: unknown, validNodeIds: Set<string>) {
       runs.push({
         id: getString(run.id, generateId()),
         nodeId,
+        outputId: getString(run.outputId, '') || undefined,
         status:
           run.status === 'complete' || run.status === 'error' || run.status === 'running'
             ? run.status
@@ -629,6 +792,9 @@ function normalizeRuns(input: unknown, validNodeIds: Set<string>) {
         requestPreview: getString(run.requestPreview, '') || undefined,
         responsePreview: getString(run.responsePreview, '') || undefined,
         sourceRunId: getString(run.sourceRunId, '') || undefined,
+        outputSpecSnapshot: 'outputSpecSnapshot' in run
+          ? normalizePromptOutputSpecSnapshot(run.outputSpecSnapshot, getString(run.outputId, '') ? { outputId: getString(run.outputId) } : undefined)
+          : undefined,
       })
   }
 
@@ -654,6 +820,7 @@ function normalizeThreadMessages(input: unknown, validNodeIds: Set<string>) {
       messages.push({
         id: getString(message.id, generateId()),
         nodeId,
+        outputId: getString(message.outputId, '') || undefined,
         role,
         text,
         createdAt: getFiniteNumber(message.createdAt, Date.now()),
@@ -682,7 +849,8 @@ function normalizeEdges(
     if (!source || !target || source === target) continue
     if (!validNodeIds.has(source) || !validNodeIds.has(target)) continue
 
-    const connectionKey = `${source}:${target}`
+    const sourceOutputId = getString(edge.sourceOutputId, '') || undefined
+    const connectionKey = `${source}:${sourceOutputId || ''}:${target}`
     if (seenConnections.has(connectionKey)) continue
     seenConnections.add(connectionKey)
 
@@ -690,6 +858,7 @@ function normalizeEdges(
       id: getString(edge.id, generateId()),
       source,
       target,
+      sourceOutputId,
       createdAt: getFiniteNumber(edge.createdAt, Date.now()),
     })
   }
@@ -793,11 +962,16 @@ export function normalizeCanvasWorkspace(
   ) as Record<CanvasLabNodeKind, CanvasNode>
 
   const existingNodesByKind = new Map<CanvasLabNodeKind, unknown>()
+  const duplicateNodes: Array<{ node: unknown; kind: CanvasLabNodeKind }> = []
   if (isRecord(workspace) && Array.isArray(workspace.nodes)) {
     for (const node of workspace.nodes) {
       if (!isRecord(node) || typeof node.kind !== 'string') continue
       const mappedKind = mapLegacyNodeKind(node.kind)
       if (!mappedKind) continue
+      if (DUPLICATE_ALLOWED_NODE_KINDS.has(mappedKind)) {
+        duplicateNodes.push({ node: { ...node, kind: mappedKind }, kind: mappedKind })
+        continue
+      }
       if (!existingNodesByKind.has(mappedKind)) {
         existingNodesByKind.set(mappedKind, { ...node, kind: mappedKind })
       }
@@ -838,6 +1012,20 @@ export function normalizeCanvasWorkspace(
       fallbackByKind[kind],
     ),
   )
+
+  if (duplicateNodes.length > 0) {
+    nodes = [
+      ...nodes,
+      ...duplicateNodes.map(({ node, kind }) =>
+        normalizeNode(
+          node,
+          kind,
+          settings,
+          fallbackByKind[kind],
+        ),
+      ),
+    ]
+  }
 
   if (legacyBriefConfig) {
     nodes = nodes.map((node) =>
@@ -916,10 +1104,14 @@ export function upsertArtifactItems(
   existing: Artifact | undefined,
   input: {
     nodeId: string
+    outputId?: string
     kind: Artifact['kind']
     label: string
     content?: string
     items?: ArtifactItem[]
+    payload?: unknown
+    schemaVersion?: number
+    outputSpecSnapshot?: PromptOutputSpecSnapshot
   },
 ) {
   const now = Date.now()
@@ -927,9 +1119,13 @@ export function upsertArtifactItems(
   if (existing) {
     return {
       ...existing,
+      outputId: input.outputId ?? existing.outputId,
       label: input.label,
       content: input.content,
       items: input.items ?? existing.items,
+      payload: input.payload ?? existing.payload,
+      schemaVersion: input.schemaVersion ?? existing.schemaVersion,
+      outputSpecSnapshot: input.outputSpecSnapshot ?? existing.outputSpecSnapshot,
       updatedAt: now,
     }
   }
@@ -937,10 +1133,14 @@ export function upsertArtifactItems(
   return {
     id: generateId(),
     nodeId: input.nodeId,
+    outputId: input.outputId,
     kind: input.kind,
     label: input.label,
     content: input.content,
     items: input.items ?? [],
+    payload: input.payload,
+    schemaVersion: input.schemaVersion,
+    outputSpecSnapshot: input.outputSpecSnapshot,
     createdAt: now,
     updatedAt: now,
   }

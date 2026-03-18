@@ -1,7 +1,8 @@
-import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { Component, type ErrorInfo, type ReactNode, type WheelEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   ConnectionLineType,
+  PanOnScrollMode,
   ReactFlow,
   ReactFlowProvider,
   type Connection,
@@ -46,6 +47,7 @@ const CANVAS_CONNECTION_LINE_STYLE = {
 }
 
 const MANUAL_NODE_OPTIONS = [
+  { kind: 'prompt_builder', label: 'Prompt Builder' },
   { kind: 'chat', label: 'Chat' },
   { kind: 'image_prompt', label: 'Image Prompt' },
   { kind: 'image_generate', label: 'Image Gen' },
@@ -152,6 +154,10 @@ function CanvasFlowSurface() {
         fitViewOptions={{ padding: 0.22 }}
         minZoom={0.35}
         maxZoom={1.6}
+        zoomOnScroll={false}
+        zoomOnPinch
+        panOnScroll
+        panOnScrollMode={PanOnScrollMode.Free}
         connectionLineType={ConnectionLineType.Bezier}
         connectionLineStyle={CANVAS_CONNECTION_LINE_STYLE}
         proOptions={{ hideAttribution: true }}
@@ -187,6 +193,13 @@ function CanvasFlowSurface() {
       </ReactFlow>
     </div>
   )
+}
+
+function handleDebugDrawerWheelCapture(event: WheelEvent<HTMLDivElement>) {
+  if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return
+  const viewport = event.currentTarget.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null
+  if (!viewport || viewport.scrollHeight <= viewport.clientHeight + 1) return
+  event.stopPropagation()
 }
 
 function DebugDrawer({
@@ -228,7 +241,10 @@ function DebugDrawer({
           <X className="h-4 w-4" />
         </Button>
       </div>
-      <ScrollArea className="h-full max-h-[calc(100%-4.25rem)]">
+      <ScrollArea
+        className="h-full max-h-[calc(100%-4.25rem)]"
+        onWheelCapture={handleDebugDrawerWheelCapture}
+      >
         <div className="space-y-5 px-4 py-4">
           {thread.length > 0 ? (
             <section className="space-y-2">
@@ -368,7 +384,10 @@ export default function CanvasLabTool() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" sideOffset={4} className="w-[14rem] rounded-[1rem] border-border/70 bg-card/95 p-1">
                     {MANUAL_NODE_OPTIONS.map((option) => {
-                      const exists = activeWorkspace?.nodes.some((node) => node.kind === option.kind)
+                      const exists =
+                        option.kind === 'prompt_builder'
+                          ? false
+                          : activeWorkspace?.nodes.some((node) => node.kind === option.kind)
                       return (
                         <DropdownMenuItem
                           key={option.kind}

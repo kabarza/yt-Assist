@@ -4,6 +4,8 @@ import type { ImageAspectRatio, ImageGenerationModel, ImageSize } from '@/types/
 
 export type CanvasLabNodeKind =
   | 'transcript_source'
+  | 'prompt_builder'
+  | 'prompt_output'
   | 'core_hook'
   | 'description'
   | 'titles'
@@ -25,6 +27,7 @@ export type ArtifactKind =
   | 'timestamp_map'
   | 'key_hooks'
   | 'brief'
+  | 'prompt_output'
   | 'core_hook'
   | 'description'
   | 'title_suggestions'
@@ -48,13 +51,36 @@ export interface ArtifactItem {
   pinned?: boolean
 }
 
+export type PromptBuilderPresetId = 'custom' | 'youtube_packaging'
+
+export type PromptOutputPresentationMode = 'rows' | 'combined_block'
+
+export type PromptOutputType =
+  | PackagingOutputNodeKind
+  | 'generic'
+  | 'image_prompt'
+
+export interface PromptOutputSpecSnapshot {
+  outputId: string
+  label: string
+  enabled: boolean
+  requestedCount: number
+  presentation: PromptOutputPresentationMode
+  promptHint: string
+  outputType: PromptOutputType
+}
+
 export interface Artifact {
   id: string
   nodeId: string
+  outputId?: string
   kind: ArtifactKind
   label: string
   content?: string
   items: ArtifactItem[]
+  payload?: unknown
+  schemaVersion?: number
+  outputSpecSnapshot?: PromptOutputSpecSnapshot
   createdAt: number
   updatedAt: number
 }
@@ -62,6 +88,7 @@ export interface Artifact {
 export interface NodeRun {
   id: string
   nodeId: string
+  outputId?: string
   status: 'running' | 'complete' | 'error'
   startedAt: number
   completedAt?: number
@@ -73,11 +100,13 @@ export interface NodeRun {
   requestPreview?: string
   responsePreview?: string
   sourceRunId?: string
+  outputSpecSnapshot?: PromptOutputSpecSnapshot
 }
 
 export interface NodeThreadMessage {
   id: string
   nodeId: string
+  outputId?: string
   role: 'user' | 'assistant' | 'system'
   text: string
   createdAt: number
@@ -114,6 +143,19 @@ export interface PackagingOutputSelection {
 }
 
 export type PackagingOutputSelectionMap = Record<PackagingOutputNodeKind, PackagingOutputSelection>
+
+export interface PromptBuilderOutputDefinition extends PromptOutputSpecSnapshot {}
+
+export interface PromptBuilderNodeConfig {
+  presetId: PromptBuilderPresetId
+  sharedInstruction: string
+  systemPrompt: string
+  outputs: PromptBuilderOutputDefinition[]
+}
+
+export interface PromptOutputNodeConfig extends PromptOutputSpecSnapshot {
+  builderNodeId: string
+}
 
 export interface OutputNodeConfig {
   requestedCount: number
@@ -172,6 +214,8 @@ export interface TranscriptSourceNodeConfig {
 
 export interface CanvasNodeConfigMap {
   transcript_source: TranscriptSourceNodeConfig
+  prompt_builder: PromptBuilderNodeConfig
+  prompt_output: PromptOutputNodeConfig
   core_hook: OutputNodeConfig
   description: OutputNodeConfig
   titles: OutputNodeConfig
@@ -188,6 +232,8 @@ export interface CanvasNodeConfigMap {
 
 export type CanvasNodeConfig =
   | TranscriptSourceNodeConfig
+  | PromptBuilderNodeConfig
+  | PromptOutputNodeConfig
   | OutputNodeConfig
   | ChatNodeConfig
   | ImageGenerateNodeConfig
@@ -212,6 +258,7 @@ export interface CanvasEdge {
   id: string
   source: string
   target: string
+  sourceOutputId?: string
   createdAt: number
 }
 
@@ -252,15 +299,25 @@ export interface CanvasExecuteNodeRequest {
   nodeKind: CanvasLabNodeKind
   nodeLabel: string
   requestedCount?: number
+  targetOutputId?: string
   thread: Array<Pick<NodeThreadMessage, 'role' | 'text'>>
   transcript?: TranscriptArtifacts
   brief?: PackagingBriefConfig
   selectedOutputs?: PackagingOutputSelectionMap
+  promptBuilder?: {
+    presetId: PromptBuilderPresetId
+    sharedInstruction?: string
+    systemPrompt?: string
+    outputs: PromptBuilderOutputDefinition[]
+  }
   sourceRunId?: string
   artifacts: Array<{
     kind: ArtifactKind
+    outputId?: string
     label: string
     content?: string
+    payload?: unknown
+    outputSpecSnapshot?: PromptOutputSpecSnapshot
     items: Array<{
       text: string
       secondaryText?: string
@@ -303,6 +360,10 @@ export interface CanvasExecutionOutputPayload {
     secondaryText?: string
     meta?: Record<string, string | number | boolean | null>
   }>
+  payload?: unknown
+  presentation?: PromptOutputPresentationMode
+  outputLabel?: string
+  outputType?: PromptOutputType
 }
 
 export interface CanvasExecuteNodeResponse {
@@ -318,7 +379,7 @@ export interface CanvasExecuteNodeResponse {
     mimeType?: string
     name?: string
   }>
-  outputs?: Partial<Record<PackagingOutputNodeKind, CanvasExecutionOutputPayload>>
+  outputs?: Record<string, CanvasExecutionOutputPayload>
   requestPreview?: string
   responsePreview?: string
 }

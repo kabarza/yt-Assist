@@ -80,21 +80,6 @@ function CanvasLabIcon({ className }: { className?: string }) {
   )
 }
 
-function ThumbnailStudioIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M4 6.5A2.5 2.5 0 016.5 4h11A2.5 2.5 0 0120 6.5v11a2.5 2.5 0 01-2.5 2.5h-11A2.5 2.5 0 014 17.5v-11z"
-      />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 15l2.5-3 2.25 2.25L16 10.5 18 13" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.5 8.5h.01" />
-    </svg>
-  )
-}
-
 export const TOOL_REGISTRY: ToolDefinition[] = [
   {
     id: 'packaging',
@@ -157,16 +142,6 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     panelKind: 'none',
     icon: CanvasLabIcon,
   },
-  {
-    id: 'thumbnailStudio',
-    label: 'Thumbnail Studio',
-    shortLabel: 'Thumbs',
-    path: '/thumbnail-studio',
-    description: 'Artboard-based thumbnail editor with assets, layers, and AI edits',
-    shortcut: 'mod+7',
-    panelKind: 'none',
-    icon: ThumbnailStudioIcon,
-  },
 ]
 
 export const TOOL_REGISTRY_BY_ID = Object.fromEntries(
@@ -178,7 +153,6 @@ export function getToolById(toolId: ToolId) {
 }
 
 export function getToolByPathname(pathname: string): ToolDefinition {
-  if (pathname.startsWith('/thumbnail-studio')) return TOOL_REGISTRY_BY_ID.thumbnailStudio
   if (pathname.startsWith('/canvas-lab')) return TOOL_REGISTRY_BY_ID.canvasLab
   if (pathname.startsWith('/chat')) return TOOL_REGISTRY_BY_ID.chat
   if (pathname.startsWith('/images')) return TOOL_REGISTRY_BY_ID.images

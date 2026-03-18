@@ -5,6 +5,7 @@ import type {
   CanvasExecuteNodeRequest,
   CanvasExecuteNodeResponse,
   PackagingOutputNodeKind,
+  PromptBuilderOutputDefinition,
 } from '../../src/types/canvasLab'
 
 const canvasRoute = new Hono()
@@ -281,6 +282,106 @@ function buildSchema(kind: PackagingOutputNodeKind | 'transcript_source' | 'imag
   }
 }
 
+function getRequestedPromptBuilderOutputs(body: CanvasExecuteNodeRequest) {
+  const outputs = body.promptBuilder?.outputs || []
+  if (!body.targetOutputId) {
+    return outputs.filter((output) => output.enabled)
+  }
+
+  return outputs.filter((output) => output.outputId === body.targetOutputId)
+}
+
+function buildPromptBuilderOutputSchema(output: PromptBuilderOutputDefinition) {
+  if (
+    output.outputType === 'core_hook' ||
+    output.outputType === 'description' ||
+    output.outputType === 'titles' ||
+    output.outputType === 'thumbnail_copy' ||
+    output.outputType === 'chapters' ||
+    output.outputType === 'hashtags' ||
+    output.outputType === 'image_prompt'
+  ) {
+    return buildOutputPayloadSchema(output.outputType, output.requestedCount)
+  }
+
+  if (output.presentation === 'combined_block') {
+    return {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        content: { type: 'string' },
+      },
+      required: ['content'],
+    }
+  }
+
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      items: {
+        type: 'array',
+        minItems: output.requestedCount,
+        maxItems: output.requestedCount,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            text: { type: 'string' },
+            secondaryText: { type: 'string' },
+          },
+          required: ['text'],
+        },
+      },
+    },
+    required: ['items'],
+  }
+}
+
+function buildPromptBuilderOutputInstruction(output: PromptBuilderOutputDefinition) {
+  const promptHint = output.promptHint.trim()
+  const hintText = promptHint ? ` Additional hint: ${promptHint}` : ''
+
+  switch (output.outputType) {
+    case 'core_hook':
+      return `- ${output.outputId} (${output.label}): write one concise core hook as exactly 2 lines.${hintText}`
+    case 'description':
+      return `- ${output.outputId} (${output.label}): generate exactly ${output.requestedCount} publish-ready YouTube descriptions.${hintText}`
+    case 'titles':
+      return `- ${output.outputId} (${output.label}): generate exactly ${output.requestedCount} titles, each with short thumbnail text.${hintText}`
+    case 'thumbnail_copy':
+      return `- ${output.outputId} (${output.label}): generate exactly ${output.requestedCount} short thumbnail text options.${hintText}`
+    case 'chapters':
+      return `- ${output.outputId} (${output.label}): generate around ${output.requestedCount} timestamped chapters in ascending order.${hintText}`
+    case 'hashtags':
+      return `- ${output.outputId} (${output.label}): generate exactly ${output.requestedCount} hashtags as one copy-ready block.${hintText}`
+    case 'image_prompt':
+      return `- ${output.outputId} (${output.label}): generate a production-ready image prompt.${hintText}`
+    default:
+      if (output.presentation === 'combined_block') {
+        return `- ${output.outputId} (${output.label}): generate one polished combined block. Aim for roughly ${output.requestedCount} useful elements if relevant.${hintText}`
+      }
+      return `- ${output.outputId} (${output.label}): generate exactly ${output.requestedCount} separate row-style items.${hintText}`
+  }
+}
+
+function buildPromptBuilderPrompt(
+  body: CanvasExecuteNodeRequest,
+  outputs: PromptBuilderOutputDefinition[],
+) {
+  return `You are generating structured outputs for a visual prompt builder inside Canvas Lab.
+
+Return strict JSON only.
+
+Shared instruction:
+${body.promptBuilder?.sharedInstruction?.trim() || 'No extra shared instruction provided.'}
+
+Requested outputs:
+${outputs.map((output) => buildPromptBuilderOutputInstruction(output)).join('\n')}
+
+${summarizeArtifacts(body)}`
+}
+
 function buildTranscriptOutputSpecs(body: CanvasExecuteNodeRequest) {
   const selectedOutputs = body.selectedOutputs || {}
   const lines: string[] = []
@@ -452,6 +553,94 @@ async function runStructuredPackaging(body: CanvasExecuteNodeRequest): Promise<C
     model,
     content: typeof parsed.content === 'string' ? parsed.content : undefined,
     items: normalizeItems(parsed.items),
+    requestPreview,
+    responsePreview,
+  }
+}
+
+async function runPromptBuilderNode(body: CanvasExecuteNodeRequest): Promise<CanvasExecuteNodeResponse> {
+  const outputs = getRequestedPromptBuilderOutputs(body)
+  if (outputs.length === 0) {
+    throw new Error('Prompt Builder needs at least one output to run.')
+  }
+
+  const client = requireOpenAIClient(body)
+  const model = body.packagingModel?.model || 'gpt-5.2'
+  const requestPreview = buildPromptBuilderPrompt(body, outputs)
+
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      {
+        role: 'system',
+        content:
+          body.promptBuilder?.systemPrompt?.trim() ||
+          'You generate structured outputs for a visual prompt-builder workspace. Be strategic and strictly follow the JSON schema.',
+      },
+      {
+        role: 'user',
+        content: requestPreview,
+      },
+    ],
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'prompt_builder_response',
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            outputs: {
+              type: 'object',
+              additionalProperties: false,
+              properties: Object.fromEntries(
+                outputs.map((output) => [output.outputId, buildPromptBuilderOutputSchema(output)]),
+              ),
+              required: outputs.map((output) => output.outputId),
+            },
+          },
+          required: ['outputs'],
+        },
+        strict: true,
+      },
+    },
+  } as any)
+
+  const content = response.choices[0]?.message?.content || '{}'
+  const parsed = JSON.parse(content)
+  const responsePreview = JSON.stringify(parsed, null, 2)
+
+  const normalizeItems = (items: unknown) =>
+    Array.isArray(items)
+      ? items.map((item: Record<string, unknown>) => ({
+          text: typeof item.text === 'string' ? item.text : '',
+          secondaryText: typeof item.secondaryText === 'string' ? item.secondaryText : undefined,
+          meta:
+            typeof item.angle === 'string' && item.angle.trim()
+              ? { angle: item.angle }
+              : undefined,
+        }))
+      : []
+
+  return {
+    provider: 'openai',
+    model,
+    outputs: Object.fromEntries(
+      outputs.map((output) => {
+        const value = parsed.outputs?.[output.outputId] as { content?: unknown; items?: unknown } | undefined
+        return [
+          output.outputId,
+          {
+            content: typeof value?.content === 'string' ? value.content : undefined,
+            items: normalizeItems(value?.items),
+            payload: value,
+            presentation: output.presentation,
+            outputLabel: output.label,
+            outputType: output.outputType,
+          },
+        ]
+      }),
+    ),
     requestPreview,
     responsePreview,
   }
@@ -705,6 +894,8 @@ canvasRoute.post('/execute-node', async (c) => {
     const response =
       body.nodeKind === 'chat'
         ? await runChatNode(body)
+        : body.nodeKind === 'prompt_builder' || body.nodeKind === 'prompt_output'
+        ? await runPromptBuilderNode(body)
         : body.nodeKind === 'image_generate'
         ? await runImageNode(body)
         : await runStructuredPackaging(body)

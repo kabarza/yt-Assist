@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useState, type WheelEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import {
   ArrowRight,
@@ -7,8 +7,12 @@ import {
   ChevronDown,
   Copy,
   Loader2,
+  Maximize2,
+  Minimize2,
   Pin,
   Play,
+  Plus,
+  Trash2,
   WandSparkles,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -33,7 +37,7 @@ import {
   useCanvasNodeLatestRun,
   useCanvasNodeThread,
 } from '@/stores/canvasLabStore'
-import { MODELS } from '@/types/chat'
+import { generateId, MODELS } from '@/types/chat'
 import type {
   Artifact,
   ArtifactItem,
@@ -41,10 +45,13 @@ import type {
   CanvasNodeConfigMap,
   PackagingBriefConfig,
   PackagingOutputNodeKind,
+  PromptBuilderOutputDefinition,
+  PromptOutputType,
 } from '@/types/canvasLab'
 import { cn } from '@/lib/utils'
 import { IMAGE_ASPECT_RATIO_OPTIONS, IMAGE_GENERATION_MODELS, IMAGE_SIZE_OPTIONS } from '@/types/images'
 import {
+  createPromptBuilderOutputsForPreset,
   deriveTranscriptArtifacts,
   PACKAGING_OUTPUT_NODE_KINDS,
 } from '@/utils/canvasLabWorkspace'
@@ -65,6 +72,30 @@ const OUTPUT_SELECTION_LABELS: Record<PackagingOutputNodeKind, string> = {
   thumbnail_copy: 'Thumbnail Copy',
   chapters: 'Chapters',
   hashtags: 'Hashtags',
+}
+
+const PROMPT_BUILDER_PRESET_OPTIONS = [
+  { value: 'custom', label: 'Custom' },
+  { value: 'youtube_packaging', label: 'YouTube Packaging' },
+] as const
+
+const PROMPT_OUTPUT_TYPE_OPTIONS: Array<{ value: PromptOutputType; label: string }> = [
+  { value: 'generic', label: 'Generic' },
+  { value: 'titles', label: 'Titles' },
+  { value: 'thumbnail_copy', label: 'Thumbnail Copy' },
+  { value: 'description', label: 'Description' },
+  { value: 'chapters', label: 'Chapters' },
+  { value: 'hashtags', label: 'Hashtags' },
+  { value: 'core_hook', label: 'Core Hook' },
+  { value: 'image_prompt', label: 'Image Prompt' },
+]
+
+function defaultPresentationForOutputType(outputType: PromptOutputType) {
+  if (outputType === 'core_hook' || outputType === 'hashtags' || outputType === 'image_prompt') {
+    return 'combined_block'
+  }
+
+  return 'rows'
 }
 
 function copyTextToClipboard(value: string, label = 'Copied') {
@@ -112,6 +143,47 @@ function guidanceSummaryText(brief: PackagingBriefConfig) {
   return summary.length > 2
     ? `${summary.slice(0, 2).join(' · ')} +${summary.length - 2} more`
     : summary.join(' · ')
+}
+
+function promptOutputTypeLabel(output: PromptBuilderOutputDefinition) {
+  switch (output.outputType) {
+    case 'core_hook':
+      return 'Core hook'
+    case 'description':
+      return 'Descriptions'
+    case 'titles':
+      return 'Titles'
+    case 'thumbnail_copy':
+      return 'Thumbnail copy'
+    case 'chapters':
+      return 'Chapters'
+    case 'hashtags':
+      return 'Hashtags'
+    case 'image_prompt':
+      return 'Image prompt'
+    default:
+      return 'Generic'
+  }
+}
+
+function shouldLeaveWheelForCanvas(event: WheelEvent<HTMLElement>) {
+  if (event.ctrlKey) return true
+  return Math.abs(event.deltaX) > Math.abs(event.deltaY)
+}
+
+function stopCanvasWheelPropagation(event: WheelEvent<HTMLElement>, scrollElement: HTMLElement | null) {
+  if (!scrollElement || shouldLeaveWheelForCanvas(event)) return
+  if (scrollElement.scrollHeight <= scrollElement.clientHeight + 1) return
+  event.stopPropagation()
+}
+
+function handleTextareaWheelCapture(event: WheelEvent<HTMLTextAreaElement>) {
+  stopCanvasWheelPropagation(event, event.currentTarget)
+}
+
+function handleScrollAreaWheelCapture(event: WheelEvent<HTMLDivElement>) {
+  const viewport = event.currentTarget.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null
+  stopCanvasWheelPropagation(event, viewport)
 }
 
 function ArtifactItemRow({
@@ -211,12 +283,18 @@ function NodeHeader({
   kind,
   onOpenCompose,
   onOpenDebug,
+  onToggleContentSize,
+  onDelete,
+  isContentExpanded = false,
 }: {
   label: string
   status: string
   kind: string
   onOpenCompose?: () => void
   onOpenDebug?: () => void
+  onToggleContentSize?: () => void
+  onDelete?: () => void
+  isContentExpanded?: boolean
 }) {
   return (
     <div className="flex items-start justify-between gap-3 border-b border-border/60 px-4 py-3">
@@ -236,6 +314,32 @@ function NodeHeader({
         >
           {status}
         </Badge>
+        {onToggleContentSize ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-[0.8rem]"
+            onClick={onToggleContentSize}
+            aria-label={isContentExpanded ? 'Collapse node content' : 'Expand node content'}
+            title={isContentExpanded ? 'Collapse content' : 'Expand content'}
+          >
+            {isContentExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+          </Button>
+        ) : null}
+        {onDelete ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-[0.8rem] text-destructive hover:text-destructive"
+            onClick={onDelete}
+            aria-label="Delete node"
+            title="Delete node"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        ) : null}
         {onOpenDebug ? (
           <Button
             type="button"
@@ -336,13 +440,21 @@ function CanvasLabNodeComponent({ data }: any) {
   const thread = useCanvasNodeThread(data.nodeId)
   const executeNode = useCanvasLabStore((state) => state.executeNode)
   const updateNodeConfig = useCanvasLabStore((state) => state.updateNodeConfig)
+  const createPromptBuilderFromTranscript = useCanvasLabStore((state) => state.createPromptBuilderFromTranscript)
   const importPackagingSession = useCanvasLabStore((state) => state.importPackagingSession)
   const importActiveChat = useCanvasLabStore((state) => state.importActiveChat)
   const importReusableAssets = useCanvasLabStore((state) => state.importReusableAssets)
+  const deleteNode = useCanvasLabStore((state) => state.deleteNode)
   const setOpenComposeNodeId = useCanvasLabStore((state) => state.setOpenComposeNodeId)
   const setOpenDebugNodeId = useCanvasLabStore((state) => state.setOpenDebugNodeId)
   const assetsById = useCanvasLabStore((state) => state.assetsById)
   const [isTranscriptGuidanceOpen, setIsTranscriptGuidanceOpen] = useState(false)
+  const [isContentExpanded, setIsContentExpanded] = useState(false)
+  const promptOutputBuilderNodeId =
+    node?.kind === 'prompt_output'
+      ? (node.config as CanvasNodeConfigMap['prompt_output']).builderNodeId
+      : null
+  const promptOutputBuilderNode = useCanvasNode(promptOutputBuilderNodeId)
 
   if (!node) {
     return null
@@ -354,14 +466,37 @@ function CanvasLabNodeComponent({ data }: any) {
     node.kind === 'transcript_source'
       ? (node.config as CanvasNodeConfigMap['transcript_source'])
       : null
+  const promptBuilderConfig =
+    node.kind === 'prompt_builder'
+      ? (node.config as CanvasNodeConfigMap['prompt_builder'])
+      : null
+  const promptOutputConfig =
+    node.kind === 'prompt_output'
+      ? (node.config as CanvasNodeConfigMap['prompt_output'])
+      : null
   const guidanceCount = transcriptConfig ? activeGuidanceFieldCount(transcriptConfig.brief) : 0
   const latestError = latestRun?.status === 'error' ? latestRun.error?.trim() || '' : ''
   const latestWarnings = latestRun?.warnings?.filter((warning) => warning.trim()) || []
   const canOpenDebug = Boolean(latestRun?.requestPreview || latestRun?.responsePreview)
   const isPackagingOutputNode = ['core_hook', 'description', 'titles', 'chapters', 'hashtags', 'thumbnail_copy', 'image_prompt'].includes(node.kind)
+  const canToggleContentSize = isPackagingOutputNode || node.kind === 'prompt_output' || node.kind === 'chat' || node.kind === 'image_generate' || node.kind === 'asset_library'
+  const canDeleteNode = node.kind !== 'transcript_source'
 
   const runNode = (message?: string, requestedCount?: number) => {
     void executeNode(node.id, { message, requestedCount })
+  }
+
+  const updatePromptBuilderOutput = (
+    builderNodeId: string,
+    outputId: string,
+    updater: (output: PromptBuilderOutputDefinition) => PromptBuilderOutputDefinition,
+  ) => {
+    void updateNodeConfig(builderNodeId, (current) => ({
+      ...(current as CanvasNodeConfigMap['prompt_builder']),
+      outputs: (current as CanvasNodeConfigMap['prompt_builder']).outputs.map((output) =>
+        output.outputId === outputId ? updater(output) : output,
+      ),
+    }))
   }
 
   return (
@@ -376,6 +511,16 @@ function CanvasLabNodeComponent({ data }: any) {
           label={node.label}
           status={node.status}
           kind={node.kind}
+          onToggleContentSize={canToggleContentSize ? () => setIsContentExpanded((current) => !current) : undefined}
+          isContentExpanded={isContentExpanded}
+          onDelete={canDeleteNode
+            ? () => {
+                if (!window.confirm(`Delete "${node.label}" from this canvas?`)) {
+                  return
+                }
+                void deleteNode(node.id)
+              }
+            : undefined}
           onOpenDebug={canOpenDebug ? () => setOpenDebugNodeId(node.id) : undefined}
           onOpenCompose={node.kind === 'compose' ? () => setOpenComposeNodeId(node.id) : undefined}
         />
@@ -407,6 +552,7 @@ function CanvasLabNodeComponent({ data }: any) {
                 }}
                 className="min-h-36 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
                 placeholder="Paste transcript here, or import from Packaging."
+                onWheelCapture={handleTextareaWheelCapture}
               />
               <div className="flex flex-wrap items-center gap-2">
                 <Button
@@ -419,6 +565,17 @@ function CanvasLabNodeComponent({ data }: any) {
                   }}
                 >
                   Import Packaging
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-full px-3"
+                  onClick={() => {
+                    void createPromptBuilderFromTranscript()
+                  }}
+                >
+                  Create Packaging Builder
                 </Button>
               </div>
               <p className="text-xs leading-5 text-muted-foreground">
@@ -540,6 +697,7 @@ function CanvasLabNodeComponent({ data }: any) {
                           }}
                           className="min-h-24 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
                           placeholder="Audience, tone, packaging direction, or channel context"
+                          onWheelCapture={handleTextareaWheelCapture}
                         />
                       </div>
 
@@ -693,6 +851,298 @@ function CanvasLabNodeComponent({ data }: any) {
             </>
           ) : null}
 
+          {node.kind === 'prompt_builder' && promptBuilderConfig ? (
+            <>
+              <div className="flex items-center gap-2">
+                <Select
+                  value={promptBuilderConfig.presetId}
+                  onValueChange={(value) => {
+                    const presetId = value as CanvasNodeConfigMap['prompt_builder']['presetId']
+                    void updateNodeConfig(node.id, (current) => {
+                      const currentConfig = current as CanvasNodeConfigMap['prompt_builder']
+                      return {
+                        ...currentConfig,
+                        presetId,
+                        outputs:
+                          presetId === currentConfig.presetId
+                            ? currentConfig.outputs
+                            : presetId === 'youtube_packaging'
+                            ? createPromptBuilderOutputsForPreset('youtube_packaging')
+                            : currentConfig.outputs.length > 0
+                            ? currentConfig.outputs
+                            : createPromptBuilderOutputsForPreset('custom'),
+                      }
+                    })
+                  }}
+                >
+                  <SelectTrigger className="rounded-[0.95rem] border-border/65 bg-background/80">
+                    <SelectValue placeholder="Preset" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROMPT_BUILDER_PRESET_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 rounded-[0.95rem] px-3"
+                  onClick={() => {
+                    void updateNodeConfig(node.id, (current) => {
+                      const currentConfig = current as CanvasNodeConfigMap['prompt_builder']
+                      return {
+                        ...currentConfig,
+                        outputs: [
+                          ...currentConfig.outputs,
+                          {
+                            outputId: generateId(),
+                            label: `Output ${currentConfig.outputs.length + 1}`,
+                            enabled: true,
+                            requestedCount: 3,
+                            presentation: 'rows',
+                            promptHint: '',
+                            outputType: 'generic',
+                          },
+                        ],
+                      }
+                    })
+                  }}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Output
+                </Button>
+              </div>
+
+              <Textarea
+                value={promptBuilderConfig.sharedInstruction}
+                onChange={(event) => {
+                  const value = event.target.value
+                  void updateNodeConfig(node.id, (current) => ({
+                    ...(current as CanvasNodeConfigMap['prompt_builder']),
+                    sharedInstruction: value,
+                  }))
+                }}
+                className="min-h-24 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
+                placeholder="Shared instruction for all outputs. Example: keep it sharp, human, and specific."
+                onWheelCapture={handleTextareaWheelCapture}
+              />
+
+              <p className="text-xs leading-5 text-muted-foreground">
+                Run the builder to update all enabled child outputs. Each output appears as its own node and can be rerun separately.
+              </p>
+
+              <div className="space-y-2">
+                {promptBuilderConfig.outputs.map((output) => (
+                  <div
+                    key={output.outputId}
+                    className="rounded-[1rem] border border-border/65 bg-background/60 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground">{output.label}</p>
+                        <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                          {promptOutputTypeLabel(output)} · {output.presentation === 'rows' ? 'Rows' : 'Combined block'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={output.enabled}
+                          onCheckedChange={(checked) => {
+                            updatePromptBuilderOutput(node.id, output.outputId, (current) => ({
+                              ...current,
+                              enabled: checked,
+                            }))
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-[0.8rem] text-destructive hover:text-destructive"
+                          onClick={() => {
+                            void updateNodeConfig(node.id, (current) => ({
+                              ...(current as CanvasNodeConfigMap['prompt_builder']),
+                              outputs: (current as CanvasNodeConfigMap['prompt_builder']).outputs.filter(
+                                (entry) => entry.outputId !== output.outputId,
+                              ),
+                            }))
+                          }}
+                          aria-label={`Remove ${output.label}`}
+                          title={`Remove ${output.label}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">Label</Label>
+                        <Input
+                          value={output.label}
+                          onChange={(event) => {
+                            const value = event.target.value
+                            updatePromptBuilderOutput(node.id, output.outputId, (current) => ({
+                              ...current,
+                              label: value,
+                            }))
+                          }}
+                          className="rounded-[0.95rem] border-border/65 bg-background/80"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">Count</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={String(output.requestedCount)}
+                          onChange={(event) => {
+                            const value = Math.max(1, Number(event.target.value) || 1)
+                            updatePromptBuilderOutput(node.id, output.outputId, (current) => ({
+                              ...current,
+                              requestedCount: value,
+                            }))
+                          }}
+                          className="rounded-[0.95rem] border-border/65 bg-background/80"
+                        />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <Label className="text-xs text-muted-foreground">Output type</Label>
+                        <Select
+                          value={output.outputType}
+                          onValueChange={(value) => {
+                            const outputType = value as PromptOutputType
+                            updatePromptBuilderOutput(node.id, output.outputId, (current) => ({
+                              ...current,
+                              outputType,
+                              presentation: defaultPresentationForOutputType(outputType),
+                            }))
+                          }}
+                        >
+                          <SelectTrigger className="rounded-[0.95rem] border-border/65 bg-background/80">
+                            <SelectValue placeholder="Output type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PROMPT_OUTPUT_TYPE_OPTIONS.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <Label className="text-xs text-muted-foreground">Presentation</Label>
+                        <Select
+                          value={output.presentation}
+                          onValueChange={(value) => {
+                            updatePromptBuilderOutput(node.id, output.outputId, (current) => ({
+                              ...current,
+                              presentation: value as PromptBuilderOutputDefinition['presentation'],
+                            }))
+                          }}
+                        >
+                          <SelectTrigger className="rounded-[0.95rem] border-border/65 bg-background/80">
+                            <SelectValue placeholder="Presentation" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="rows">Separate rows</SelectItem>
+                            <SelectItem value="combined_block">One combined block</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <Label className="text-xs text-muted-foreground">Output hint</Label>
+                        <Textarea
+                          value={output.promptHint}
+                          onChange={(event) => {
+                            const value = event.target.value
+                            updatePromptBuilderOutput(node.id, output.outputId, (current) => ({
+                              ...current,
+                              promptHint: value,
+                            }))
+                          }}
+                          className="min-h-20 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
+                          placeholder="Optional extra direction just for this output."
+                          onWheelCapture={handleTextareaWheelCapture}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
+
+          {node.kind === 'prompt_output' && promptOutputConfig ? (
+            <>
+              <div className="rounded-[1rem] border border-border/65 bg-background/60 px-3 py-2.5">
+                <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                  {promptOutputBuilderNode?.label || 'Prompt Builder'}
+                </p>
+                <p className="mt-1 text-sm font-medium text-foreground">
+                  {promptOutputTypeLabel(promptOutputConfig)}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {promptOutputConfig.presentation === 'rows'
+                    ? `Returns ${promptOutputConfig.requestedCount} separate items.`
+                    : `Returns one copyable block with up to ${promptOutputConfig.requestedCount} items worth of content.`}
+                </p>
+              </div>
+
+              <Textarea
+                value={promptOutputConfig.promptHint}
+                onChange={(event) => {
+                  const value = event.target.value
+                  updatePromptBuilderOutput(promptOutputConfig.builderNodeId, promptOutputConfig.outputId, (current) => ({
+                    ...current,
+                    promptHint: value,
+                  }))
+                }}
+                className="min-h-20 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
+                placeholder="Refinement hint for this output."
+                onWheelCapture={handleTextareaWheelCapture}
+              />
+
+              {latestArtifact ? (
+                <ScrollArea
+                  className={cn('pr-2', !isContentExpanded && 'max-h-60')}
+                  onWheelCapture={handleScrollAreaWheelCapture}
+                >
+                  <div className="space-y-2">
+                    {promptOutputConfig.presentation === 'combined_block' ? (
+                      <CopyableContentBlock
+                        content={
+                          latestArtifact.content?.trim() ||
+                          latestArtifact.items.map((item) => item.text).join('\n')
+                        }
+                      />
+                    ) : latestArtifact.items.length > 0 ? (
+                      latestArtifact.items.map((item) => (
+                        <ArtifactItemRow
+                          key={item.id}
+                          artifact={latestArtifact}
+                          item={item}
+                          asset={item.assetId ? assetsById[item.assetId] : undefined}
+                        />
+                      ))
+                    ) : latestArtifact.content?.trim() ? (
+                      <CopyableContentBlock content={latestArtifact.content} />
+                    ) : null}
+                  </div>
+                </ScrollArea>
+              ) : (
+                <div className="rounded-[1rem] border border-dashed border-border/70 bg-background/60 p-4 text-xs leading-5 text-muted-foreground">
+                  Nothing generated yet.
+                </div>
+              )}
+            </>
+          ) : null}
+
           {isPackagingOutputNode ? (
             <>
               <Textarea
@@ -706,9 +1156,13 @@ function CanvasLabNodeComponent({ data }: any) {
                 }}
                 className="min-h-20 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
                 placeholder="Direction for the next run, for example: darker, more direct, more curious."
+                onWheelCapture={handleTextareaWheelCapture}
               />
               {latestArtifact ? (
-                <ScrollArea className="max-h-60 pr-2">
+                <ScrollArea
+                  className={cn('pr-2', !isContentExpanded && 'max-h-60')}
+                  onWheelCapture={handleScrollAreaWheelCapture}
+                >
                   <div className="space-y-2">
                     {latestArtifact.content?.trim() && (latestArtifact.items.length === 0 || node.kind === 'core_hook') ? (
                       <CopyableContentBlock content={latestArtifact.content} />
@@ -801,8 +1255,12 @@ function CanvasLabNodeComponent({ data }: any) {
                 }}
                 className="min-h-24 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
                 placeholder="Ask a research or follow-up question."
+                onWheelCapture={handleTextareaWheelCapture}
               />
-              <ScrollArea className="max-h-48 pr-2">
+              <ScrollArea
+                className={cn('pr-2', !isContentExpanded && 'max-h-48')}
+                onWheelCapture={handleScrollAreaWheelCapture}
+              >
                 <div className="space-y-2">
                   {thread.slice(-4).map((message) => (
                     <div
@@ -910,7 +1368,10 @@ function CanvasLabNodeComponent({ data }: any) {
                 </Select>
               </div>
               {latestArtifact?.items.length ? (
-                <ScrollArea className="max-h-56 pr-2">
+                <ScrollArea
+                  className={cn('pr-2', !isContentExpanded && 'max-h-56')}
+                  onWheelCapture={handleScrollAreaWheelCapture}
+                >
                   <div className="grid grid-cols-2 gap-2">
                     {latestArtifact.items.map((item) => {
                       const asset = item.assetId ? assetsById[item.assetId] : undefined
@@ -941,7 +1402,10 @@ function CanvasLabNodeComponent({ data }: any) {
 
           {node.kind === 'asset_library' ? (
             latestArtifact?.items.length ? (
-              <ScrollArea className="max-h-56 pr-2">
+              <ScrollArea
+                className={cn('pr-2', !isContentExpanded && 'max-h-56')}
+                onWheelCapture={handleScrollAreaWheelCapture}
+              >
                 <div className="grid grid-cols-2 gap-2">
                   {latestArtifact.items.map((item) => {
                     const asset = item.assetId ? assetsById[item.assetId] : undefined
@@ -1009,6 +1473,22 @@ function CanvasLabNodeComponent({ data }: any) {
         {node.kind === 'chat' ? (
           <RunFooter
             onRun={() => runNode((node.config as CanvasNodeConfigMap['chat']).draftPrompt)}
+            isRunning={isRunning}
+            primaryLabel={latestArtifact ? 'Refine' : 'Run'}
+          />
+        ) : null}
+
+        {node.kind === 'prompt_builder' ? (
+          <RunFooter
+            onRun={() => runNode()}
+            isRunning={isRunning}
+            primaryLabel="Run All"
+          />
+        ) : null}
+
+        {node.kind === 'prompt_output' ? (
+          <RunFooter
+            onRun={() => runNode()}
             isRunning={isRunning}
             primaryLabel={latestArtifact ? 'Refine' : 'Run'}
           />

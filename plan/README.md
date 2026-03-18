@@ -9,9 +9,6 @@ This folder currently tracks the active planning set for the repository.
 ### [NANO-BANANA-PRO.md](./NANO-BANANA-PRO.md)
 Integration brief for adding Google's `gemini-3-pro-image-preview` image workflow to the app.
 
-### [THUMBNAIL-EDITOR.md](./THUMBNAIL-EDITOR.md)
-Product and technical plan for a lightweight thumbnail editor with layer-based AI edits.
-
 ### [THE-GREAT-REPORT.md](./THE-GREAT-REPORT.md)
 High-level implementation inventory and architecture notes.
 
