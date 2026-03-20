@@ -60,6 +60,115 @@ export type PromptOutputType =
   | 'generic'
   | 'image_prompt'
 
+export type CanvasStructuredProvider = 'openai' | 'anthropic' | 'gemini'
+
+export type PromptProgramFieldSection = 'core' | 'optional'
+
+export type PromptProgramFieldVisibility = 'always' | 'collapsible'
+
+export type PromptProgramInputFieldType = 'long_text' | 'short_text' | 'number' | 'boolean'
+
+export type PromptProgramOutputFieldType =
+  | 'text_item_list'
+  | 'combined_block'
+  | 'table'
+  | 'code_block'
+
+export type PromptProgramOutputGrouping = 'combined' | 'separate'
+
+export type PromptProgramInputInjectionRule =
+  | 'replace_section'
+  | 'append_if_present'
+  | 'boolean_preference'
+  | 'conditional_value'
+
+export interface TemplateBlock {
+  id: string
+  kind: 'instruction' | 'context' | 'output'
+  text: string
+}
+
+export interface PromptProgramResponseContractRef {
+  version: number
+  contractId: string
+}
+
+export interface PromptProgramNodeViewConfig {
+  optionalInputsCollapsed: boolean
+  outputSettingsCollapsed: boolean
+}
+
+export interface PromptProgramInputVisibilityRule {
+  fieldId: string
+  equals: string | number | boolean
+}
+
+interface PromptProgramInputFieldBase<TType extends PromptProgramInputFieldType, TValue> {
+  id: string
+  type: TType
+  label: string
+  description?: string
+  required: boolean
+  defaultValue?: TValue
+  value: TValue
+  section: PromptProgramFieldSection
+  visible: PromptProgramFieldVisibility
+  promptLabel?: string
+  injectionRule?: PromptProgramInputInjectionRule
+  visibleWhen?: PromptProgramInputVisibilityRule
+}
+
+export type PromptProgramInputField =
+  | PromptProgramInputFieldBase<'long_text', string>
+  | PromptProgramInputFieldBase<'short_text', string>
+  | PromptProgramInputFieldBase<'number', number>
+  | PromptProgramInputFieldBase<'boolean', boolean>
+
+export interface PromptProgramOutputField {
+  id: string
+  captureKey: string
+  enabled: boolean
+  label: string
+  description: string
+  promptHint: string
+  count: number
+  outputType: PromptOutputType
+  responseType: PromptProgramOutputFieldType
+  grouping: PromptProgramOutputGrouping
+}
+
+export interface PromptProgramNodeConfig {
+  templateId: 'transcript_source' | 'custom'
+  inputSchema: PromptProgramInputField[]
+  outputSchema: PromptProgramOutputField[]
+  promptTemplate: TemplateBlock[]
+  responseContract: PromptProgramResponseContractRef
+  viewConfig: PromptProgramNodeViewConfig
+}
+
+export interface OutputContractField {
+  captureKey: string
+  label: string
+  description?: string
+  promptHint?: string
+  count: number
+  outputType: PromptOutputType
+  responseType: PromptProgramOutputFieldType
+  grouping: PromptProgramOutputGrouping
+}
+
+export interface OutputContractValidationIssue {
+  path: string
+  message: string
+}
+
+export interface OutputContractDefinition {
+  name: string
+  schema: Record<string, unknown>
+  fields: OutputContractField[]
+  wrapKey?: string
+}
+
 export interface PromptOutputSpecSnapshot {
   outputId: string
   label: string
@@ -210,6 +319,7 @@ export interface TranscriptSourceNodeConfig {
   artifacts: TranscriptArtifacts
   brief: PackagingBriefConfig
   selectedOutputs: PackagingOutputSelectionMap
+  promptProgram: PromptProgramNodeConfig
 }
 
 export interface CanvasNodeConfigMap {
@@ -304,6 +414,7 @@ export interface CanvasExecuteNodeRequest {
   transcript?: TranscriptArtifacts
   brief?: PackagingBriefConfig
   selectedOutputs?: PackagingOutputSelectionMap
+  promptProgram?: PromptProgramNodeConfig
   promptBuilder?: {
     presetId: PromptBuilderPresetId
     sharedInstruction?: string
@@ -348,8 +459,11 @@ export interface CanvasExecuteNodeRequest {
     geminiApiKey?: string
   }
   packagingModel?: {
+    provider?: CanvasStructuredProvider
     model: string
     openaiApiKey?: string
+    anthropicApiKey?: string
+    geminiApiKey?: string
   }
 }
 

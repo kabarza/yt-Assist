@@ -4,11 +4,28 @@ import OpenAI from 'openai'
 import type {
   CanvasExecuteNodeRequest,
   CanvasExecuteNodeResponse,
+  CanvasStructuredProvider,
   PackagingOutputNodeKind,
   PromptBuilderOutputDefinition,
 } from '../../src/types/canvasLab'
+import {
+  buildMultiOutputContract,
+  buildOutputInstruction,
+  buildSingleOutputContract,
+  coerceOutputContractPayload,
+  promptBuilderOutputToContractField,
+  promptProgramOutputToContractField,
+  validateOutputContractPayload,
+  validationIssuesToText,
+} from '../../src/lib/canvasOutputContract'
 
 const canvasRoute = new Hono()
+
+const DEFAULT_STRUCTURED_MODELS: Record<CanvasStructuredProvider, string> = {
+  openai: 'gpt-5.2',
+  anthropic: 'claude-sonnet-4-20250514',
+  gemini: 'gemini-3.1-pro-preview',
+}
 
 function requireOpenAIClient(body: CanvasExecuteNodeRequest) {
   const apiKey = body.packagingModel?.openaiApiKey?.trim() || process.env.OPENAI_API_KEY || ''
@@ -17,6 +34,34 @@ function requireOpenAIClient(body: CanvasExecuteNodeRequest) {
   }
 
   return new OpenAI({ apiKey })
+}
+
+function requireAnthropicClient(body: CanvasExecuteNodeRequest) {
+  const apiKey = body.packagingModel?.anthropicApiKey?.trim() || process.env.ANTHROPIC_API_KEY || ''
+  if (!apiKey) {
+    throw new Error('Anthropic API key is not configured for Canvas Lab.')
+  }
+
+  return new Anthropic({ apiKey })
+}
+
+function requireGeminiApiKey(body: CanvasExecuteNodeRequest) {
+  const apiKey = body.packagingModel?.geminiApiKey?.trim() || process.env.GEMINI_API_KEY || ''
+  if (!apiKey) {
+    throw new Error('Gemini API key is not configured for Canvas Lab.')
+  }
+
+  return apiKey
+}
+
+function getStructuredProvider(body: CanvasExecuteNodeRequest): CanvasStructuredProvider {
+  return body.packagingModel?.provider || 'openai'
+}
+
+function getStructuredModel(body: CanvasExecuteNodeRequest) {
+  const provider = getStructuredProvider(body)
+  const requestedModel = body.packagingModel?.model?.trim()
+  return requestedModel || DEFAULT_STRUCTURED_MODELS[provider]
 }
 
 function summarizeArtifacts(body: CanvasExecuteNodeRequest) {
@@ -479,82 +524,318 @@ Use the context below and respond with JSON that matches the provided schema.
 ${summarizeArtifacts(body)}`
 }
 
-async function runStructuredPackaging(body: CanvasExecuteNodeRequest): Promise<CanvasExecuteNodeResponse> {
-  const client = requireOpenAIClient(body)
-  const normalizedKind = normalizePackagingNodeKind(body.nodeKind)
-  const schema = buildSchema(normalizedKind, body)
-  const model = body.packagingModel?.model || 'gpt-5.2'
-  const requestPreview = buildPackagingPrompt(body)
+function getTranscriptPromptProgramFields(body: CanvasExecuteNodeRequest) {
+  return (body.promptProgram?.outputSchema || [])
+    .filter((field) => field.enabled)
+    .map((field) => promptProgramOutputToContractField(field))
+}
 
+function buildPromptProgramOutputSpecs(body: CanvasExecuteNodeRequest) {
+  return getTranscriptPromptProgramFields(body)
+    .map((field) => buildOutputInstruction(field))
+    .join('\n')
+}
+
+function buildTranscriptPromptProgramPrompt(body: CanvasExecuteNodeRequest) {
+  const additionalContext = buildPromptProgramOutputSpecs(body)
+
+  return `You are generating transcript-driven outputs inside Canvas Lab.
+
+Return strict JSON only.
+
+Use these rules:
+- Keep each output grounded in the transcript.
+- Avoid filler, generic AI phrasing, and fabricated claims.
+- Apply optional guidance only when it is provided.
+- Respect each output's count and shape exactly.
+
+Requested outputs:
+${additionalContext || '- No outputs were enabled.'}
+
+${summarizeArtifacts(body)}`
+}
+
+function getTranscriptOutputContract(body: CanvasExecuteNodeRequest) {
+  const fields = getTranscriptPromptProgramFields(body)
+  if (fields.length === 0) {
+    throw new Error('Transcript Source needs at least one enabled output.')
+  }
+
+  return buildMultiOutputContract('transcript_source_response', fields)
+}
+
+function getPromptBuilderOutputContract(body: CanvasExecuteNodeRequest) {
+  const outputs = getRequestedPromptBuilderOutputs(body)
+  if (outputs.length === 0) {
+    throw new Error('Prompt Builder needs at least one output to run.')
+  }
+
+  return buildMultiOutputContract(
+    'prompt_builder_response',
+    outputs.map((output) => promptBuilderOutputToContractField(output)),
+  )
+}
+
+function getSingleNodeContract(body: CanvasExecuteNodeRequest) {
+  const normalizedKind = normalizePackagingNodeKind(body.nodeKind)
+  const requestedCount = body.requestedCount || 1
+
+  const field = promptBuilderOutputToContractField({
+    outputId: normalizedKind,
+    label: body.nodeLabel,
+    enabled: true,
+    requestedCount,
+    presentation:
+      normalizedKind === 'core_hook' || normalizedKind === 'hashtags' || normalizedKind === 'image_prompt'
+        ? 'combined_block'
+        : 'rows',
+    promptHint: '',
+    outputType: normalizedKind,
+  } satisfies PromptBuilderOutputDefinition)
+
+  return buildSingleOutputContract(`${normalizedKind}_response`, field)
+}
+
+function parseGeminiStructuredPayload(payload: unknown) {
+  const candidates = Array.isArray((payload as { candidates?: unknown[] } | null)?.candidates)
+    ? ((payload as {
+        candidates: Array<{
+          content?: { parts?: Array<{ text?: string }> }
+        }>
+      }).candidates)
+    : []
+
+  const text = candidates
+    .flatMap((candidate) => candidate.content?.parts || [])
+    .map((part) => part.text || '')
+    .join('')
+    .trim()
+
+  if (!text) {
+    throw new Error('Gemini returned no structured JSON text.')
+  }
+
+  return JSON.parse(text)
+}
+
+async function requestStructuredOutputFromProvider(
+  body: CanvasExecuteNodeRequest,
+  contractName: string,
+  contractSchema: Record<string, unknown>,
+  systemPrompt: string,
+  userPrompt: string,
+) {
+  const provider = getStructuredProvider(body)
+  const model = getStructuredModel(body)
+
+  if (provider === 'anthropic') {
+    const client = requireAnthropicClient(body)
+    const response = await client.messages.create({
+      model,
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [
+        {
+          role: 'user',
+          content: userPrompt,
+        },
+      ],
+      tools: [
+        {
+          name: 'capture_output',
+          description: 'Return the final structured output that matches the schema exactly.',
+          input_schema: contractSchema as Anthropic.Tool.InputSchema,
+        },
+      ],
+      tool_choice: {
+        type: 'tool',
+        name: 'capture_output',
+        disable_parallel_tool_use: true,
+      },
+    })
+
+    const toolUse = response.content.find(
+      (block): block is Anthropic.ToolUseBlock =>
+        block.type === 'tool_use' && block.name === 'capture_output',
+    )
+
+    if (!toolUse) {
+      throw new Error('Anthropic did not return a structured tool result.')
+    }
+
+    return {
+      provider,
+      model,
+      parsed: toolUse.input,
+    }
+  }
+
+  if (provider === 'gemini') {
+    const apiKey = requireGeminiApiKey(body)
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          system_instruction: {
+            parts: [{ text: systemPrompt }],
+          },
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: userPrompt }],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseJsonSchema: contractSchema,
+          },
+        }),
+      },
+    )
+
+    const payload = await response.json().catch(() => null)
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload, `Gemini structured output request failed (${response.status})`))
+    }
+
+    return {
+      provider,
+      model,
+      parsed: parseGeminiStructuredPayload(payload),
+    }
+  }
+
+  const client = requireOpenAIClient(body)
   const response = await client.chat.completions.create({
     model,
     messages: [
       {
         role: 'system',
-        content:
-          normalizedKind === 'transcript_source'
-            ? 'You generate structured YouTube packaging outputs for a transcript-first creative workspace. Be strategic and strictly follow the JSON schema.'
-            : 'You generate structured YouTube packaging outputs for a graph-based creative workspace. Be concise, strategic, and strictly follow the JSON schema.',
+        content: systemPrompt,
       },
       {
         role: 'user',
-        content: requestPreview,
+        content: userPrompt,
       },
     ],
     response_format: {
       type: 'json_schema',
       json_schema: {
-        name: `${normalizedKind}_node_response`,
-        schema: schema.schema,
+        name: contractName,
+        schema: contractSchema,
         strict: true,
       },
     },
   } as any)
 
   const content = response.choices[0]?.message?.content || '{}'
-  const parsed = JSON.parse(content)
-  const responsePreview = JSON.stringify(parsed, null, 2)
+  return {
+    provider,
+    model,
+    parsed: JSON.parse(content),
+  }
+}
 
-  const normalizeItems = (items: unknown) =>
-    Array.isArray(items)
-      ? items.map((item: Record<string, unknown>) => ({
-          text: typeof item.text === 'string' ? item.text : '',
-          secondaryText: typeof item.secondaryText === 'string' ? item.secondaryText : undefined,
-          meta:
-            typeof item.angle === 'string' && item.angle.trim()
-              ? { angle: item.angle }
-              : undefined,
-        }))
-      : []
+async function requestValidatedStructuredOutput(
+  body: CanvasExecuteNodeRequest,
+  contract: ReturnType<typeof buildSingleOutputContract> | ReturnType<typeof buildMultiOutputContract>,
+  systemPrompt: string,
+  userPrompt: string,
+) {
+  const warnings: string[] = []
+  let repairCount = 0
+  let structured = await requestStructuredOutputFromProvider(
+    body,
+    contract.name,
+    contract.schema,
+    systemPrompt,
+    userPrompt,
+  )
 
-  if (normalizedKind === 'transcript_source') {
-    return {
-      provider: 'openai',
-      model,
-      outputs: Object.fromEntries(
-        Object.entries(parsed.outputs || {}).map(([outputKind, value]) => [
-          outputKind,
-          {
-            content:
-              typeof (value as { content?: unknown }).content === 'string'
-                ? (value as { content: string }).content
-                : undefined,
-            items: normalizeItems((value as { items?: unknown }).items),
-          },
-        ]),
-      ),
-      requestPreview,
-      responsePreview,
-    }
+  let validation = validateOutputContractPayload(contract, structured.parsed)
+  if (!validation.valid) {
+    warnings.push('Structured output failed validation on the first pass.')
+
+    const repairPrompt = `Repair this structured JSON so it matches the schema exactly.
+
+Validation issues:
+${validationIssuesToText(validation.issues)}
+
+Previous JSON:
+${JSON.stringify(structured.parsed, null, 2)}`
+
+    structured = await requestStructuredOutputFromProvider(
+      body,
+      `${contract.name}_repair`,
+      contract.schema,
+      `${systemPrompt}\n\nYou repair invalid structured JSON against a schema.`,
+      repairPrompt,
+    )
+    repairCount += 1
+    validation = validateOutputContractPayload(contract, structured.parsed)
+  }
+
+  if (!validation.valid) {
+    warnings.push(`Structured output is still partially invalid after ${repairCount} repair pass.`)
+  } else if (repairCount > 0) {
+    warnings.push('Structured output was repaired after validation failed.')
   }
 
   return {
-    provider: 'openai',
-    model,
-    content: typeof parsed.content === 'string' ? parsed.content : undefined,
-    items: normalizeItems(parsed.items),
+    provider: structured.provider,
+    model: structured.model,
+    warnings,
+    repairCount,
+    parsed: structured.parsed,
+    normalized: coerceOutputContractPayload(contract, structured.parsed),
+    responsePreview: JSON.stringify(structured.parsed, null, 2),
+  }
+}
+
+async function runStructuredPackaging(body: CanvasExecuteNodeRequest): Promise<CanvasExecuteNodeResponse> {
+  const normalizedKind = normalizePackagingNodeKind(body.nodeKind)
+  if (normalizedKind === 'transcript_source') {
+    const contract = getTranscriptOutputContract(body)
+    const requestPreview = buildTranscriptPromptProgramPrompt(body)
+    const result = await requestValidatedStructuredOutput(
+      body,
+      contract,
+      'You generate strict structured outputs for a transcript-first creative workspace. Follow the response contract exactly.',
+      requestPreview,
+    )
+
+    return {
+      provider: result.provider,
+      model: result.model,
+      warnings: result.warnings.length > 0 ? result.warnings : undefined,
+      outputs: result.normalized,
+      requestPreview,
+      responsePreview: result.responsePreview,
+    }
+  }
+
+  const contract = getSingleNodeContract(body)
+  const requestPreview = buildPackagingPrompt(body)
+  const result = await requestValidatedStructuredOutput(
+    body,
+    contract,
+    'You generate structured outputs for a graph-based creative workspace. Be concise, strategic, and follow the response contract exactly.',
     requestPreview,
-    responsePreview,
+  )
+  const payload = result.normalized[contract.fields[0].captureKey]
+
+  return {
+    provider: result.provider,
+    model: result.model,
+    warnings: result.warnings.length > 0 ? result.warnings : undefined,
+    content: payload?.content,
+    items: payload?.items,
+    requestPreview,
+    responsePreview: result.responsePreview,
   }
 }
 
@@ -564,75 +845,27 @@ async function runPromptBuilderNode(body: CanvasExecuteNodeRequest): Promise<Can
     throw new Error('Prompt Builder needs at least one output to run.')
   }
 
-  const client = requireOpenAIClient(body)
-  const model = body.packagingModel?.model || 'gpt-5.2'
+  const contract = getPromptBuilderOutputContract(body)
   const requestPreview = buildPromptBuilderPrompt(body, outputs)
-
-  const response = await client.chat.completions.create({
-    model,
-    messages: [
-      {
-        role: 'system',
-        content:
-          body.promptBuilder?.systemPrompt?.trim() ||
-          'You generate structured outputs for a visual prompt-builder workspace. Be strategic and strictly follow the JSON schema.',
-      },
-      {
-        role: 'user',
-        content: requestPreview,
-      },
-    ],
-    response_format: {
-      type: 'json_schema',
-      json_schema: {
-        name: 'prompt_builder_response',
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            outputs: {
-              type: 'object',
-              additionalProperties: false,
-              properties: Object.fromEntries(
-                outputs.map((output) => [output.outputId, buildPromptBuilderOutputSchema(output)]),
-              ),
-              required: outputs.map((output) => output.outputId),
-            },
-          },
-          required: ['outputs'],
-        },
-        strict: true,
-      },
-    },
-  } as any)
-
-  const content = response.choices[0]?.message?.content || '{}'
-  const parsed = JSON.parse(content)
-  const responsePreview = JSON.stringify(parsed, null, 2)
-
-  const normalizeItems = (items: unknown) =>
-    Array.isArray(items)
-      ? items.map((item: Record<string, unknown>) => ({
-          text: typeof item.text === 'string' ? item.text : '',
-          secondaryText: typeof item.secondaryText === 'string' ? item.secondaryText : undefined,
-          meta:
-            typeof item.angle === 'string' && item.angle.trim()
-              ? { angle: item.angle }
-              : undefined,
-        }))
-      : []
+  const result = await requestValidatedStructuredOutput(
+    body,
+    contract,
+    body.promptBuilder?.systemPrompt?.trim() ||
+      'You generate structured outputs for a visual prompt-builder workspace. Be strategic and follow the response contract exactly.',
+    requestPreview,
+  )
 
   return {
-    provider: 'openai',
-    model,
+    provider: result.provider,
+    model: result.model,
+    warnings: result.warnings.length > 0 ? result.warnings : undefined,
     outputs: Object.fromEntries(
       outputs.map((output) => {
-        const value = parsed.outputs?.[output.outputId] as { content?: unknown; items?: unknown } | undefined
+        const value = result.normalized[output.outputId]
         return [
           output.outputId,
           {
-            content: typeof value?.content === 'string' ? value.content : undefined,
-            items: normalizeItems(value?.items),
+            ...value,
             payload: value,
             presentation: output.presentation,
             outputLabel: output.label,
@@ -642,7 +875,7 @@ async function runPromptBuilderNode(body: CanvasExecuteNodeRequest): Promise<Can
       }),
     ),
     requestPreview,
-    responsePreview,
+    responsePreview: result.responsePreview,
   }
 }
 

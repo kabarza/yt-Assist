@@ -9,6 +9,12 @@ import {
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import { toast } from 'sonner'
+import {
+  createTranscriptSourcePromptProgram,
+  isPackagingOutputType,
+  promptProgramOutputFieldToOutputSpecSnapshot,
+  syncTranscriptSourceConfig,
+} from '@/lib/canvasPromptProgram'
 import { useChatStore } from '@/stores/chatStore'
 import { useImageGenerationStore } from '@/stores/imageGenerationStore'
 import { usePackagingSessionStore } from '@/stores/packagingSessionStore'
@@ -77,12 +83,15 @@ interface CanvasLabStore {
   createWorkspace: (name?: string) => Promise<string>
   deleteWorkspace: (workspaceId: string) => Promise<void>
   renameWorkspace: (workspaceId: string, name: string) => Promise<void>
+  renameNode: (nodeId: string, label: string) => Promise<void>
   setActiveWorkspaceId: (workspaceId: string | null) => void
   setSelectedNodeId: (nodeId: string | null) => void
   setOpenComposeNodeId: (nodeId: string | null) => void
   setOpenDebugNodeId: (nodeId: string | null) => void
   addNode: (kind: Extract<CanvasLabNodeKind, 'prompt_builder' | 'chat' | 'image_prompt' | 'image_generate' | 'asset_library' | 'compose'>) => Promise<void>
   createPromptBuilderFromTranscript: () => Promise<string | null>
+  duplicateNode: (nodeId: string) => Promise<string | null>
+  disconnectNode: (nodeId: string) => Promise<void>
   deleteNode: (nodeId: string) => Promise<void>
   applyFlowNodeChanges: (changes: NodeChange[]) => Promise<void>
   applyFlowEdgeChanges: (changes: EdgeChange[]) => Promise<void>
@@ -393,6 +402,127 @@ function getNextNodePosition(workspace: CanvasWorkspace, kind: CanvasLabNodeKind
   return {
     x: base.x + kindCount * 32,
     y: base.y + kindCount * 24,
+  }
+}
+
+function cloneNodeConfig<TConfig extends CanvasNode['config']>(config: TConfig): TConfig {
+  return JSON.parse(JSON.stringify(config)) as TConfig
+}
+
+function duplicateNodeLabel(label: string) {
+  return label.trim().endsWith('Copy') ? label.trim() : `${label.trim()} Copy`
+}
+
+function duplicateCanvasNodeInWorkspace(
+  workspace: CanvasWorkspace,
+  node: CanvasNode,
+  settings = useSettingsStore.getState().settings,
+) {
+  if (node.kind === 'transcript_source' || isPackagingOutputNodeKind(node.kind)) {
+    return { workspace, duplicatedNodeId: null as string | null, error: 'This node cannot be duplicated yet.' }
+  }
+
+  if (node.kind === 'prompt_output') {
+    const config = getPromptOutputConfig(node)
+    if (!config) {
+      return { workspace, duplicatedNodeId: null as string | null, error: 'Prompt Output is missing its builder config.' }
+    }
+
+    const builderNode = getNodeById(workspace, config.builderNodeId)
+    const builderConfig = getPromptBuilderConfig(builderNode)
+    if (!builderNode || !builderConfig) {
+      return { workspace, duplicatedNodeId: null as string | null, error: 'Prompt Output builder could not be found.' }
+    }
+
+    const nextOutputId = generateId()
+    let nextWorkspace: CanvasWorkspace = {
+      ...workspace,
+      nodes: workspace.nodes.map((entry) =>
+        entry.id === builderNode.id
+          ? {
+              ...entry,
+              config: {
+                ...builderConfig,
+                outputs: [
+                  ...builderConfig.outputs,
+                  {
+                    ...cloneNodeConfig(config),
+                    outputId: nextOutputId,
+                    label: duplicateNodeLabel(config.label),
+                  },
+                ],
+              },
+              updatedAt: Date.now(),
+            }
+          : entry,
+      ),
+      updatedAt: Date.now(),
+    }
+
+    nextWorkspace = synchronizePromptBuilderOutputNodes(nextWorkspace, builderNode.id).workspace
+    const duplicatedNode = getPromptOutputNodeByOutputId(nextWorkspace, builderNode.id, nextOutputId)
+    return {
+      workspace: nextWorkspace,
+      duplicatedNodeId: duplicatedNode?.id || builderNode.id,
+      error: null as string | null,
+    }
+  }
+
+  const duplicatedNode = createCanvasNode(node.kind, settings)
+  duplicatedNode.label = duplicateNodeLabel(node.label)
+  duplicatedNode.position = {
+    x: node.position.x + 48,
+    y: node.position.y + 48,
+  }
+  duplicatedNode.width = node.width
+  duplicatedNode.height = node.height
+  duplicatedNode.status = 'idle'
+  duplicatedNode.lastRunId = undefined
+  duplicatedNode.config = cloneNodeConfig(node.config)
+
+  if (duplicatedNode.kind === 'compose') {
+    const composeConfig = duplicatedNode.config as CanvasNodeConfigMap['compose']
+    duplicatedNode.config = {
+      ...composeConfig,
+      items: composeConfig.items.map((item) => ({
+        ...item,
+        id: generateId(),
+      })),
+      selectedItemId: null,
+    }
+  }
+
+  if (duplicatedNode.kind === 'prompt_builder') {
+    const builderConfig = getPromptBuilderConfig(node)
+    if (builderConfig) {
+      const outputIdMap = Object.fromEntries(
+        builderConfig.outputs.map((output) => [output.outputId, generateId()]),
+      ) as Record<string, string>
+
+      duplicatedNode.config = {
+        ...cloneNodeConfig(builderConfig),
+        outputs: builderConfig.outputs.map((output) => ({
+          ...output,
+          outputId: outputIdMap[output.outputId],
+        })),
+      } as CanvasNodeConfigMap['prompt_builder']
+    }
+  }
+
+  let nextWorkspace: CanvasWorkspace = {
+    ...workspace,
+    nodes: orderWorkspaceNodes([...workspace.nodes, duplicatedNode]),
+    updatedAt: Date.now(),
+  }
+
+  if (duplicatedNode.kind === 'prompt_builder') {
+    nextWorkspace = synchronizePromptBuilderOutputNodes(nextWorkspace, duplicatedNode.id).workspace
+  }
+
+  return {
+    workspace: nextWorkspace,
+    duplicatedNodeId: duplicatedNode.id,
+    error: null as string | null,
   }
 }
 
@@ -1333,6 +1463,54 @@ function upsertGeneratedArtifactForNode(
   }
 }
 
+function upsertGeneratedArtifactForTranscriptOutput(
+  workspace: CanvasWorkspace,
+  transcriptNode: CanvasNode,
+  outputSpecSnapshot: PromptOutputSpecSnapshot,
+  payload: CanvasExecutionOutputPayload | undefined,
+) {
+  if (!payload) return workspace
+
+  const artifactKind =
+    outputSpecSnapshot.outputType === 'image_prompt'
+      ? 'image_prompt'
+      : outputSpecSnapshot.outputType === 'titles'
+      ? 'title_suggestions'
+      : outputSpecSnapshot.outputType === 'chapters'
+      ? 'chapter_list'
+      : isPackagingOutputType(outputSpecSnapshot.outputType)
+      ? outputSpecSnapshot.outputType
+      : 'prompt_output'
+
+  const existingArtifact = workspace.artifacts.find(
+    (artifact) =>
+      artifact.nodeId === transcriptNode.id &&
+      artifact.outputId === outputSpecSnapshot.outputId &&
+      artifact.kind === artifactKind,
+  )
+
+  const nextArtifact = upsertArtifactItems(existingArtifact, {
+    nodeId: transcriptNode.id,
+    outputId: outputSpecSnapshot.outputId,
+    kind: artifactKind,
+    label: outputSpecSnapshot.label,
+    content: payload.content,
+    items: toArtifactItems(payload),
+    payload: payload.payload,
+    schemaVersion: 1,
+    outputSpecSnapshot,
+  })
+
+  return {
+    ...workspace,
+    artifacts: [
+      ...workspace.artifacts.filter((artifact) => artifact.id !== existingArtifact?.id),
+      nextArtifact,
+    ].sort((left, right) => left.createdAt - right.createdAt),
+    updatedAt: Date.now(),
+  }
+}
+
 function withWorkspaceUpdate(
   state: CanvasLabStore,
   set: (
@@ -1489,6 +1667,26 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
     await saveCanvasWorkspace(nextWorkspace)
   },
 
+  renameNode: async (nodeId, label) => {
+    const trimmedLabel = label.trim()
+    if (!trimmedLabel) return
+
+    const state = get()
+    withWorkspaceUpdate(state, set, (workspace) => ({
+      ...workspace,
+      nodes: workspace.nodes.map((node) =>
+        node.id === nodeId
+          ? {
+              ...node,
+              label: trimmedLabel,
+              updatedAt: Date.now(),
+            }
+          : node,
+      ),
+      updatedAt: Date.now(),
+    }))
+  },
+
   setActiveWorkspaceId: (workspaceId) => {
     set({
       activeWorkspaceId: workspaceId,
@@ -1599,6 +1797,48 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
     return builderNode.id
   },
 
+  duplicateNode: async (nodeId) => {
+    const state = get()
+    const workspace = getActiveWorkspace(state)
+    if (!workspace) return null
+
+    const node = getNodeById(workspace, nodeId)
+    if (!node) return null
+
+    const duplicated = duplicateCanvasNodeInWorkspace(workspace, node)
+    if (duplicated.error) {
+      toast.error(duplicated.error)
+      return null
+    }
+
+    set({
+      workspaces: replaceWorkspace(state.workspaces, duplicated.workspace),
+      selectedNodeId: duplicated.duplicatedNodeId,
+    })
+    await saveCanvasWorkspace(duplicated.workspace)
+    toast.success(`${node.label} duplicated.`)
+    return duplicated.duplicatedNodeId
+  },
+
+  disconnectNode: async (nodeId) => {
+    const state = get()
+    withWorkspaceUpdate(state, set, (workspace) => {
+      const nextEdges = workspace.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId)
+      if (nextEdges.length === workspace.edges.length) {
+        return workspace
+      }
+
+      return markNodesAndDescendantsStale(
+        {
+          ...workspace,
+          edges: nextEdges,
+          updatedAt: Date.now(),
+        },
+        [nodeId],
+      )
+    })
+  },
+
   deleteNode: async (nodeId) => {
     const state = get()
     const activeWorkspace = getActiveWorkspace(state)
@@ -1660,18 +1900,33 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
             return entry
           }
 
-          return {
-            ...entry,
-            config: {
-              ...(entry.config as CanvasNodeConfigMap['transcript_source']),
-              selectedOutputs: {
-                ...(entry.config as CanvasNodeConfigMap['transcript_source']).selectedOutputs,
-                [node.kind]: {
-                  ...(entry.config as CanvasNodeConfigMap['transcript_source']).selectedOutputs[node.kind as PackagingOutputNodeKind],
-                  enabled: false,
-                },
+          const nextConfig = syncTranscriptSourceConfig({
+            ...(entry.config as CanvasNodeConfigMap['transcript_source']),
+            selectedOutputs: {
+              ...(entry.config as CanvasNodeConfigMap['transcript_source']).selectedOutputs,
+              [node.kind]: {
+                ...(entry.config as CanvasNodeConfigMap['transcript_source']).selectedOutputs[node.kind as PackagingOutputNodeKind],
+                enabled: false,
               },
             },
+            promptProgram: {
+              ...(entry.config as CanvasNodeConfigMap['transcript_source']).promptProgram,
+              outputSchema: (entry.config as CanvasNodeConfigMap['transcript_source']).promptProgram.outputSchema.map((field) =>
+                field.outputType === node.kind
+                  ? {
+                      ...field,
+                      enabled: false,
+                    }
+                  : field,
+              ),
+            },
+          }, {
+            deriveArtifacts: deriveTranscriptArtifacts,
+          })
+
+          return {
+            ...entry,
+            config: nextConfig,
             updatedAt: Date.now(),
           }
         }),
@@ -1769,9 +2024,19 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
       const previousNode = workspace.nodes.find((node) => node.id === nodeId) || null
       let nextNodes = workspace.nodes.map((node) => {
         if (node.id !== nodeId) return node
+
+        const nextConfig = updater(node.config)
         return {
           ...node,
-          config: updater(node.config),
+          config:
+            node.kind === 'transcript_source'
+              ? syncTranscriptSourceConfig(
+                  nextConfig as CanvasNodeConfigMap['transcript_source'],
+                  {
+                    deriveArtifacts: deriveTranscriptArtifacts,
+                  },
+                )
+              : nextConfig,
           updatedAt: Date.now(),
         }
       })
@@ -1947,6 +2212,10 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
       node.kind === 'transcript_source'
         ? (node.config as CanvasNodeConfigMap['transcript_source']).selectedOutputs
         : extractSelectedOutputs(ancestorNodes)
+    const transcriptPromptProgram =
+      node.kind === 'transcript_source'
+        ? (node.config as CanvasNodeConfigMap['transcript_source']).promptProgram
+        : undefined
     const promptBuilderRequest = extractPromptBuilderRequestConfig(workspace, node, ancestorNodes)
 
     const threadMessages = getNodeThreadMessages(workspace, nodeId, outputId)
@@ -1979,6 +2248,10 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
     const selectedOutputKinds =
       node.kind === 'transcript_source'
         ? getSelectedPackagingOutputKinds(node.config as CanvasNodeConfigMap['transcript_source'])
+        : []
+    const enabledTranscriptOutputFields =
+      node.kind === 'transcript_source'
+        ? (node.config as CanvasNodeConfigMap['transcript_source']).promptProgram.outputSchema.filter((field) => field.enabled)
         : []
 
     let runningWorkspace = withWorkspaceUpdate(state, set, (currentWorkspace) => {
@@ -2060,6 +2333,10 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
         activeNode.kind === 'transcript_source'
           ? selectedOutputs || undefined
           : undefined,
+      promptProgram:
+        activeNode.kind === 'transcript_source'
+          ? transcriptPromptProgram
+          : undefined,
       promptBuilder: promptBuilderRequest?.promptBuilder,
       sourceRunId:
         activeNode.kind !== 'transcript_source'
@@ -2121,7 +2398,7 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
 
       const assistantPreview =
         activeNode.kind === 'transcript_source'
-          ? `${selectedOutputKinds.length} packaging output${selectedOutputKinds.length === 1 ? '' : 's'} updated`
+          ? `${enabledTranscriptOutputFields.length} output${enabledTranscriptOutputFields.length === 1 ? '' : 's'} updated`
           : activeNode.kind === 'prompt_builder'
           ? `${getPromptBuilderOutputDefinitions(activeNode).filter((output) => output.enabled).length} builder output${getPromptBuilderOutputDefinitions(activeNode).filter((output) => output.enabled).length === 1 ? '' : 's'} updated`
           : activeNode.kind === 'prompt_output'
@@ -2204,6 +2481,18 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
           }
 
           nextWorkspace = synchronizeNodeArtifacts(nextWorkspace, nodeId, get().assetsById)
+
+          const transcriptSourceNode = getNodeById(nextWorkspace, nodeId)
+          if (transcriptSourceNode) {
+            for (const outputField of enabledTranscriptOutputFields) {
+              nextWorkspace = upsertGeneratedArtifactForTranscriptOutput(
+                nextWorkspace,
+                transcriptSourceNode,
+                promptProgramOutputFieldToOutputSpecSnapshot(outputField),
+                response.outputs?.[outputField.captureKey],
+              )
+            }
+          }
 
           for (const outputKind of selectedOutputKinds) {
             const outputNode = getNodeByKind(nextWorkspace, outputKind)
@@ -2534,7 +2823,6 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
     withWorkspaceUpdate(state, set, (currentWorkspace) => {
       let nextNodes = currentWorkspace.nodes.map((node) => {
         if (node.kind === 'transcript_source') {
-          const artifacts = deriveTranscriptArtifacts(packaging.transcript)
           const brief: PackagingBriefConfig = {
             mustInclude: packaging.mustInclude,
             niceToInclude: packaging.niceToInclude,
@@ -2544,16 +2832,24 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
             additionalContext: packaging.additionalContext,
             transcriptIncludeTimestamps: packaging.transcriptIncludeTimestamps,
           }
+          const nextConfig = syncTranscriptSourceConfig({
+            transcript: packaging.transcript,
+            artifacts: deriveTranscriptArtifacts(packaging.transcript),
+            brief,
+            selectedOutputs,
+            promptProgram: createTranscriptSourcePromptProgram({
+              transcript: packaging.transcript,
+              brief,
+              selectedOutputs,
+            }),
+          }, {
+            deriveArtifacts: deriveTranscriptArtifacts,
+          })
 
           return {
             ...node,
             status: packaging.transcript.trim() || hasBriefConfigContent(brief) ? 'complete' : 'idle',
-            config: {
-              transcript: packaging.transcript,
-              artifacts,
-              brief,
-              selectedOutputs,
-            },
+            config: nextConfig,
             updatedAt: Date.now(),
           }
         }

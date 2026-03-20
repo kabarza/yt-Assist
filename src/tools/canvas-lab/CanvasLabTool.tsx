@@ -109,8 +109,20 @@ function CanvasFlowSurface() {
   const applyFlowNodeChanges = useCanvasLabStore((state) => state.applyFlowNodeChanges)
   const applyFlowEdgeChanges = useCanvasLabStore((state) => state.applyFlowEdgeChanges)
   const connectNodes = useCanvasLabStore((state) => state.connectNodes)
+  const addNode = useCanvasLabStore((state) => state.addNode)
+  const executeNode = useCanvasLabStore((state) => state.executeNode)
+  const duplicateNode = useCanvasLabStore((state) => state.duplicateNode)
+  const disconnectNode = useCanvasLabStore((state) => state.disconnectNode)
+  const deleteNode = useCanvasLabStore((state) => state.deleteNode)
   const setSelectedNodeId = useCanvasLabStore((state) => state.setSelectedNodeId)
   const setOpenComposeNodeId = useCanvasLabStore((state) => state.setOpenComposeNodeId)
+  const setOpenDebugNodeId = useCanvasLabStore((state) => state.setOpenDebugNodeId)
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const [contextMenu, setContextMenu] = useState<
+    | null
+    | { type: 'pane'; x: number; y: number }
+    | { type: 'node'; x: number; y: number; nodeId: string }
+  >(null)
 
   const nodes = useMemo(
     () =>
@@ -144,8 +156,21 @@ function CanvasFlowSurface() {
     return null
   }
 
+  const contextNode =
+    contextMenu?.type === 'node'
+      ? workspace.nodes.find((entry) => entry.id === contextMenu.nodeId) || null
+      : null
+
+  const closeContextMenu = () => setContextMenu(null)
+
   return (
-    <div className="relative flex min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_top,hsl(var(--background)),hsl(var(--muted))/0.45_55%,hsl(var(--background)))]">
+    <div
+      ref={surfaceRef}
+      className="relative flex min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_top,hsl(var(--background)),hsl(var(--muted))/0.45_55%,hsl(var(--background)))]"
+      onMouseDown={() => {
+        if (contextMenu) closeContextMenu()
+      }}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -171,6 +196,7 @@ function CanvasFlowSurface() {
           void connectNodes(connection)
         }}
         onNodeClick={(_, node) => {
+          closeContextMenu()
           setSelectedNodeId(node.id)
         }}
         onNodeDoubleClick={(_, node) => {
@@ -178,8 +204,31 @@ function CanvasFlowSurface() {
             setOpenComposeNodeId(node.id)
           }
         }}
+        onNodeContextMenu={(event, flowNode) => {
+          event.preventDefault()
+          const bounds = surfaceRef.current?.getBoundingClientRect()
+          if (!bounds) return
+          setSelectedNodeId(flowNode.id)
+          setContextMenu({
+            type: 'node',
+            nodeId: flowNode.id,
+            x: event.clientX - bounds.left,
+            y: event.clientY - bounds.top,
+          })
+        }}
         onPaneClick={() => {
+          closeContextMenu()
           setSelectedNodeId(null)
+        }}
+        onPaneContextMenu={(event) => {
+          event.preventDefault()
+          const bounds = surfaceRef.current?.getBoundingClientRect()
+          if (!bounds) return
+          setContextMenu({
+            type: 'pane',
+            x: event.clientX - bounds.left,
+            y: event.clientY - bounds.top,
+          })
         }}
         nodesDraggable
         edgesFocusable
@@ -191,6 +240,103 @@ function CanvasFlowSurface() {
       >
         <Background color="var(--border)" gap={22} size={1} />
       </ReactFlow>
+      {contextMenu ? (
+        <div
+          role="menu"
+          className="absolute z-40 min-w-52 overflow-hidden rounded-[1rem] border border-border/70 bg-card/96 p-1 shadow-[0_22px_60px_rgba(0,0,0,0.24)] backdrop-blur-xl"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          {contextMenu.type === 'pane' ? (
+            <>
+              {MANUAL_NODE_OPTIONS.map((option) => (
+                <button
+                  key={option.kind}
+                  type="button"
+                  className="flex w-full items-center rounded-[0.8rem] px-3 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-background/70"
+                  onClick={() => {
+                    closeContextMenu()
+                    void addNode(option.kind)
+                  }}
+                >
+                  Add {option.label}
+                </button>
+              ))}
+              <div className="my-1 h-px bg-border/70" />
+              <button
+                type="button"
+                disabled
+                className="flex w-full items-center rounded-[0.8rem] px-3 py-2.5 text-left text-sm text-muted-foreground opacity-60"
+              >
+                Paste Node
+              </button>
+              <button
+                type="button"
+                disabled
+                className="flex w-full items-center rounded-[0.8rem] px-3 py-2.5 text-left text-sm text-muted-foreground opacity-60"
+              >
+                Auto-layout (Future)
+              </button>
+            </>
+          ) : contextNode ? (
+            <>
+              <button
+                type="button"
+                className="flex w-full items-center rounded-[0.8rem] px-3 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-background/70"
+                onClick={() => {
+                  closeContextMenu()
+                  void executeNode(contextNode.id)
+                }}
+              >
+                Run
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center rounded-[0.8rem] px-3 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-background/70"
+                onClick={() => {
+                  closeContextMenu()
+                  void duplicateNode(contextNode.id)
+                }}
+              >
+                Duplicate
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center rounded-[0.8rem] px-3 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-background/70"
+                onClick={() => {
+                  closeContextMenu()
+                  void disconnectNode(contextNode.id)
+                }}
+              >
+                Disconnect
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center rounded-[0.8rem] px-3 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-background/70"
+                onClick={() => {
+                  closeContextMenu()
+                  setOpenDebugNodeId(contextNode.id)
+                }}
+              >
+                Open Debug
+              </button>
+              <div className="my-1 h-px bg-border/70" />
+              <button
+                type="button"
+                disabled={contextNode.kind === 'transcript_source'}
+                className="flex w-full items-center rounded-[0.8rem] px-3 py-2.5 text-left text-sm text-destructive transition-colors hover:bg-background/70 disabled:opacity-40"
+                onClick={() => {
+                  closeContextMenu()
+                  if (contextNode.kind !== 'transcript_source' && window.confirm(`Delete "${contextNode.label}"?`)) {
+                    void deleteNode(contextNode.id)
+                  }
+                }}
+              >
+                Delete
+              </button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

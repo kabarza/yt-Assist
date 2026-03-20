@@ -21,6 +21,11 @@ import type {
   TranscriptArtifacts,
 } from '@/types/canvasLab'
 import type { AppSettings } from '@/stores/settingsStore'
+import {
+  createTranscriptSourcePromptProgram,
+  normalizePromptProgramNodeConfig,
+  syncTranscriptSourceConfig,
+} from '@/lib/canvasPromptProgram'
 
 export const DEFAULT_PACKAGING_BRIEF: PackagingBriefConfig = {
   mustInclude: '',
@@ -438,12 +443,15 @@ function createDefaultNodeConfig(kind: CanvasLabNodeKind, settings: AppSettings)
 
   switch (kind) {
     case 'transcript_source':
-      return {
+      return syncTranscriptSourceConfig({
         transcript: '',
         artifacts: createEmptyTranscriptArtifacts(),
         brief: { ...DEFAULT_PACKAGING_BRIEF },
         selectedOutputs: createDefaultPackagingOutputSelections(),
-      }
+        promptProgram: createTranscriptSourcePromptProgram(),
+      }, {
+        deriveArtifacts: deriveTranscriptArtifacts,
+      })
     case 'prompt_builder':
       return createPromptBuilderConfig()
     case 'prompt_output':
@@ -544,12 +552,25 @@ function normalizeNodeConfig(
     case 'transcript_source': {
       const transcript = getString(config.transcript)
       const briefSource = isRecord(config.brief) ? config.brief : config
-      return {
+      const brief = normalizePackagingBriefConfig(briefSource)
+      const selectedOutputs = normalizePackagingOutputSelections(config.selectedOutputs)
+
+      return syncTranscriptSourceConfig({
         transcript,
         artifacts: normalizeTranscriptArtifacts(config.artifacts, transcript),
-        brief: normalizePackagingBriefConfig(briefSource),
-        selectedOutputs: normalizePackagingOutputSelections(config.selectedOutputs),
-      }
+        brief,
+        selectedOutputs,
+        promptProgram: normalizePromptProgramNodeConfig(
+          config.promptProgram,
+          createTranscriptSourcePromptProgram({
+            transcript,
+            brief,
+            selectedOutputs,
+          }),
+        ),
+      }, {
+        deriveArtifacts: deriveTranscriptArtifacts,
+      })
     }
     case 'prompt_builder': {
       const presetId = config.presetId === 'youtube_packaging' ? 'youtube_packaging' : 'custom'
@@ -1030,17 +1051,23 @@ export function normalizeCanvasWorkspace(
   if (legacyBriefConfig) {
     nodes = nodes.map((node) =>
       node.kind === 'transcript_source'
-        ? {
-            ...node,
-            config: {
+        ? (() => {
+            const nextConfig = syncTranscriptSourceConfig({
               ...(node.config as CanvasNodeConfigMap['transcript_source']),
               brief: legacyBriefConfig,
-            },
+            }, {
+              deriveArtifacts: deriveTranscriptArtifacts,
+            })
+
+            return {
+            ...node,
+            config: nextConfig,
             updatedAt: Math.max(
               node.updatedAt,
               getFiniteNumber(legacyBriefNode?.updatedAt, node.updatedAt),
             ),
           }
+        })()
         : node,
     )
   }

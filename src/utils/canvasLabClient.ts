@@ -51,11 +51,13 @@ export async function requestCanvasNodeExecution(
       body: JSON.stringify({
         ...request,
         packagingModel: {
+          provider: settings.defaultProvider === 'anthropic' ? 'anthropic' : 'openai',
           model:
-            settings.defaultProvider === 'openai' && settings.defaultModel
-              ? settings.defaultModel
-              : 'gpt-5.2',
+            settings.defaultModel ||
+            (settings.defaultProvider === 'anthropic' ? 'claude-sonnet-4-20250514' : 'gpt-5.2'),
           openaiApiKey: settings.openaiApiKey?.trim() || undefined,
+          anthropicApiKey: settings.anthropicApiKey?.trim() || undefined,
+          geminiApiKey: settings.geminiApiKey?.trim() || undefined,
         },
         chat: request.chat
           ? {

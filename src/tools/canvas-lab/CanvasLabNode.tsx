@@ -1,15 +1,20 @@
-import { memo, useState, type WheelEvent } from 'react'
+import { memo, useState, type ComponentProps, type WheelEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import {
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
   Bug,
   Check,
   ChevronDown,
   Copy,
+  CopyPlus,
   Loader2,
   Maximize2,
   Minimize2,
+  MoreHorizontal,
   Pin,
+  Pencil,
   Play,
   Plus,
   Trash2,
@@ -22,6 +27,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -30,6 +42,16 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  addPromptProgramOutputField,
+  createPromptProgramOutputField,
+  movePromptProgramOutputField,
+  removePromptProgramOutputField,
+  setPromptProgramInputValue,
+  TRANSCRIPT_SOURCE_INPUT_IDS,
+  updatePromptProgramOutputField,
+} from '@/lib/canvasPromptProgram'
 import {
   useCanvasLabStore,
   useCanvasNode,
@@ -44,7 +66,7 @@ import type {
   CanvasAsset,
   CanvasNodeConfigMap,
   PackagingBriefConfig,
-  PackagingOutputNodeKind,
+  PromptProgramOutputField,
   PromptBuilderOutputDefinition,
   PromptOutputType,
 } from '@/types/canvasLab'
@@ -52,8 +74,6 @@ import { cn } from '@/lib/utils'
 import { IMAGE_ASPECT_RATIO_OPTIONS, IMAGE_GENERATION_MODELS, IMAGE_SIZE_OPTIONS } from '@/types/images'
 import {
   createPromptBuilderOutputsForPreset,
-  deriveTranscriptArtifacts,
-  PACKAGING_OUTPUT_NODE_KINDS,
 } from '@/utils/canvasLabWorkspace'
 import { toast } from 'sonner'
 
@@ -63,15 +83,6 @@ const statusClassNames = {
   complete: 'border-emerald-500/35 text-emerald-700 dark:text-emerald-300',
   stale: 'border-blue-500/35 text-blue-700 dark:text-blue-300',
   error: 'border-destructive/40 text-destructive',
-}
-
-const OUTPUT_SELECTION_LABELS: Record<PackagingOutputNodeKind, string> = {
-  core_hook: 'Core Hook',
-  description: 'Description',
-  titles: 'Titles',
-  thumbnail_copy: 'Thumbnail Copy',
-  chapters: 'Chapters',
-  hashtags: 'Hashtags',
 }
 
 const PROMPT_BUILDER_PRESET_OPTIONS = [
@@ -174,7 +185,15 @@ function shouldLeaveWheelForCanvas(event: WheelEvent<HTMLElement>) {
 function stopCanvasWheelPropagation(event: WheelEvent<HTMLElement>, scrollElement: HTMLElement | null) {
   if (!scrollElement || shouldLeaveWheelForCanvas(event)) return
   if (scrollElement.scrollHeight <= scrollElement.clientHeight + 1) return
-  event.stopPropagation()
+
+  const deltaY = event.deltaY
+  const canScrollUp = scrollElement.scrollTop > 0
+  const canScrollDown =
+    scrollElement.scrollTop + scrollElement.clientHeight < scrollElement.scrollHeight - 1
+
+  if ((deltaY < 0 && canScrollUp) || (deltaY > 0 && canScrollDown)) {
+    event.stopPropagation()
+  }
 }
 
 function handleTextareaWheelCapture(event: WheelEvent<HTMLTextAreaElement>) {
@@ -184,6 +203,53 @@ function handleTextareaWheelCapture(event: WheelEvent<HTMLTextAreaElement>) {
 function handleScrollAreaWheelCapture(event: WheelEvent<HTMLDivElement>) {
   const viewport = event.currentTarget.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null
   stopCanvasWheelPropagation(event, viewport)
+}
+
+function outputFieldSummary(field: PromptProgramOutputField) {
+  const shapeLabel =
+    field.responseType === 'combined_block'
+      ? 'combined block'
+      : field.responseType === 'code_block'
+      ? 'code block'
+      : field.responseType === 'table'
+      ? 'table'
+      : 'item list'
+
+  return `${shapeLabel} · ${field.count} ${field.count === 1 ? 'item' : 'items'}`
+}
+
+function IconActionButton({
+  label,
+  children,
+  className,
+  forceVisible = false,
+  ...props
+}: ComponentProps<typeof Button> & {
+  label: string
+  forceVisible?: boolean
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className={cn(
+            'h-8 w-8 rounded-[0.8rem] transition-opacity focus-visible:opacity-100',
+            !forceVisible && 'opacity-0 group-hover:opacity-100',
+            className,
+          )}
+          aria-label={label}
+          title={label}
+          {...props}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
 }
 
 function ArtifactItemRow({
@@ -223,53 +289,43 @@ function ArtifactItemRow({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 rounded-[0.8rem] opacity-0 transition-opacity group-hover:opacity-100"
+          <IconActionButton
             onClick={() => copyTextToClipboard(item.text, 'Copied item')}
-            aria-label="Copy item"
+            label="Copy item"
           >
             <Copy className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
+          </IconActionButton>
+          <IconActionButton
             variant={item.accepted ? 'default' : 'ghost'}
-            size="icon"
-            className="h-8 w-8 rounded-[0.8rem]"
+            forceVisible={Boolean(item.accepted)}
+            className={item.accepted ? 'opacity-100' : undefined}
             onClick={() => {
               void toggleArtifactItemState(artifact.id, item.id, 'accepted')
             }}
-            aria-label={item.accepted ? 'Unaccept item' : 'Accept item'}
+            label={item.accepted ? 'Remove from downstream use' : 'Accept for downstream use'}
           >
             <Check className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
+          </IconActionButton>
+          <IconActionButton
             variant={item.pinned ? 'secondary' : 'ghost'}
-            size="icon"
-            className="h-8 w-8 rounded-[0.8rem]"
+            forceVisible={Boolean(item.pinned)}
+            className={item.pinned ? 'opacity-100' : undefined}
             onClick={() => {
               void toggleArtifactItemState(artifact.id, item.id, 'pinned')
             }}
-            aria-label={item.pinned ? 'Unpin item' : 'Pin item'}
+            label={item.pinned ? 'Unpin favored item' : 'Pin to keep favored across refinements'}
           >
             <Pin className="h-3.5 w-3.5" />
-          </Button>
+          </IconActionButton>
           {composeNodeId ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 rounded-[0.8rem]"
+            <IconActionButton
               onClick={() => {
                 void addComposeItemFromArtifact(composeNodeId, artifact.id, item.id)
               }}
-              aria-label="Send item to compose stage"
+              label="Send to compose stage"
             >
               <ArrowRight className="h-3.5 w-3.5" />
-            </Button>
+            </IconActionButton>
           ) : null}
         </div>
       </div>
@@ -279,8 +335,10 @@ function ArtifactItemRow({
 
 function NodeHeader({
   label,
-  status,
   kind,
+  onRename,
+  onDuplicate,
+  onDisconnect,
   onOpenCompose,
   onOpenDebug,
   onToggleContentSize,
@@ -288,8 +346,10 @@ function NodeHeader({
   isContentExpanded = false,
 }: {
   label: string
-  status: string
   kind: string
+  onRename?: () => void
+  onDuplicate?: () => void
+  onDisconnect?: () => void
   onOpenCompose?: () => void
   onOpenDebug?: () => void
   onToggleContentSize?: () => void
@@ -305,64 +365,79 @@ function NodeHeader({
         <h3 className="text-sm font-semibold tracking-tight text-foreground">{label}</h3>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <Badge
-          variant="outline"
-          className={cn(
-            'rounded-full bg-background/70 text-[10px] uppercase',
-            statusClassNames[status as keyof typeof statusClassNames] || statusClassNames.idle,
-          )}
-        >
-          {status}
-        </Badge>
         {onToggleContentSize ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 rounded-[0.8rem]"
-            onClick={onToggleContentSize}
-            aria-label={isContentExpanded ? 'Collapse node content' : 'Expand node content'}
-            title={isContentExpanded ? 'Collapse content' : 'Expand content'}
-          >
-            {isContentExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-[0.8rem]"
+                onClick={onToggleContentSize}
+                aria-label={isContentExpanded ? 'Collapse node content' : 'Expand node content'}
+                title={isContentExpanded ? 'Collapse content' : 'Expand content'}
+              >
+                {isContentExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{isContentExpanded ? 'Collapse content' : 'Expand content'}</TooltipContent>
+          </Tooltip>
         ) : null}
-        {onDelete ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 rounded-[0.8rem] text-destructive hover:text-destructive"
-            onClick={onDelete}
-            aria-label="Delete node"
-            title="Delete node"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        ) : null}
-        {onOpenDebug ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 rounded-full px-3"
-            onClick={onOpenDebug}
-          >
-            <Bug className="mr-1.5 h-3.5 w-3.5" />
-            Debug
-          </Button>
-        ) : null}
-        {onOpenCompose ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 rounded-full px-3"
-            onClick={onOpenCompose}
-          >
-            Stage
-          </Button>
-        ) : null}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-[0.8rem]"
+              aria-label="Open node actions"
+              title="Open node actions"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52 rounded-[1rem] border-border/70 bg-card/96 p-1">
+            {onRename ? (
+              <DropdownMenuItem className="rounded-[0.8rem] px-3 py-2.5" onClick={onRename}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Rename
+              </DropdownMenuItem>
+            ) : null}
+            {onDuplicate ? (
+              <DropdownMenuItem className="rounded-[0.8rem] px-3 py-2.5" onClick={onDuplicate}>
+                <CopyPlus className="mr-2 h-4 w-4" />
+                Duplicate
+              </DropdownMenuItem>
+            ) : null}
+            {onDisconnect ? (
+              <DropdownMenuItem className="rounded-[0.8rem] px-3 py-2.5" onClick={onDisconnect}>
+                Disconnect links
+              </DropdownMenuItem>
+            ) : null}
+            {(onOpenDebug || onOpenCompose) && <DropdownMenuSeparator className="mx-0 my-1" />}
+            {onOpenDebug ? (
+              <DropdownMenuItem className="rounded-[0.8rem] px-3 py-2.5" onClick={onOpenDebug}>
+                <Bug className="mr-2 h-4 w-4" />
+                Open Debug
+              </DropdownMenuItem>
+            ) : null}
+            {onOpenCompose ? (
+              <DropdownMenuItem className="rounded-[0.8rem] px-3 py-2.5" onClick={onOpenCompose}>
+                Open Compose Stage
+              </DropdownMenuItem>
+            ) : null}
+            {onDelete ? <DropdownMenuSeparator className="mx-0 my-1" /> : null}
+            {onDelete ? (
+              <DropdownMenuItem
+                className="rounded-[0.8rem] px-3 py-2.5 text-destructive focus:text-destructive"
+                onClick={onDelete}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   )
@@ -409,6 +484,62 @@ function RunFooter({
   )
 }
 
+function RefinementRail({
+  value,
+  onChange,
+  placeholder,
+  onRun,
+  onRunFiveMore,
+  onRunTenMore,
+  isRunning,
+  allowCountButtons = false,
+  primaryLabel = 'Run',
+}: {
+  value: string
+  onChange: (value: string) => void
+  placeholder: string
+  onRun: () => void
+  onRunFiveMore?: () => void
+  onRunTenMore?: () => void
+  isRunning: boolean
+  allowCountButtons?: boolean
+  primaryLabel?: string
+}) {
+  return (
+    <div className="border-t border-border/60 bg-background/55 px-4 py-3">
+      <Textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="min-h-20 rounded-[1rem] border-border/65 bg-background/90 shadow-none"
+        placeholder={placeholder}
+        onWheelCapture={handleTextareaWheelCapture}
+      />
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          className="h-8 rounded-full px-3"
+          onClick={onRun}
+          disabled={isRunning}
+        >
+          {isRunning ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-2 h-3.5 w-3.5" />}
+          {primaryLabel}
+        </Button>
+        {allowCountButtons && onRunFiveMore ? (
+          <Button type="button" variant="outline" size="sm" className="h-8 rounded-full px-3" onClick={onRunFiveMore} disabled={isRunning}>
+            5 more
+          </Button>
+        ) : null}
+        {allowCountButtons && onRunTenMore ? (
+          <Button type="button" variant="outline" size="sm" className="h-8 rounded-full px-3" onClick={onRunTenMore} disabled={isRunning}>
+            10 more
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function CopyableContentBlock({
   content,
 }: {
@@ -417,16 +548,12 @@ function CopyableContentBlock({
   return (
     <div className="group rounded-[1rem] border border-border/65 bg-background/70 p-3 text-sm leading-6 text-foreground">
       <div className="mb-2 flex justify-end">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 rounded-[0.8rem] opacity-0 transition-opacity group-hover:opacity-100"
+        <IconActionButton
           onClick={() => copyTextToClipboard(content, 'Copied block')}
-          aria-label="Copy block"
+          label="Copy block"
         >
           <Copy className="h-3.5 w-3.5" />
-        </Button>
+        </IconActionButton>
       </div>
       <div className="whitespace-pre-wrap">{content}</div>
     </div>
@@ -444,11 +571,15 @@ function CanvasLabNodeComponent({ data }: any) {
   const importPackagingSession = useCanvasLabStore((state) => state.importPackagingSession)
   const importActiveChat = useCanvasLabStore((state) => state.importActiveChat)
   const importReusableAssets = useCanvasLabStore((state) => state.importReusableAssets)
+  const renameNode = useCanvasLabStore((state) => state.renameNode)
+  const duplicateNode = useCanvasLabStore((state) => state.duplicateNode)
+  const disconnectNode = useCanvasLabStore((state) => state.disconnectNode)
   const deleteNode = useCanvasLabStore((state) => state.deleteNode)
   const setOpenComposeNodeId = useCanvasLabStore((state) => state.setOpenComposeNodeId)
   const setOpenDebugNodeId = useCanvasLabStore((state) => state.setOpenDebugNodeId)
   const assetsById = useCanvasLabStore((state) => state.assetsById)
   const [isTranscriptGuidanceOpen, setIsTranscriptGuidanceOpen] = useState(false)
+  const [isTranscriptOutputsOpen, setIsTranscriptOutputsOpen] = useState(false)
   const [isContentExpanded, setIsContentExpanded] = useState(false)
   const promptOutputBuilderNodeId =
     node?.kind === 'prompt_output'
@@ -481,9 +612,31 @@ function CanvasLabNodeComponent({ data }: any) {
   const isPackagingOutputNode = ['core_hook', 'description', 'titles', 'chapters', 'hashtags', 'thumbnail_copy', 'image_prompt'].includes(node.kind)
   const canToggleContentSize = isPackagingOutputNode || node.kind === 'prompt_output' || node.kind === 'chat' || node.kind === 'image_generate' || node.kind === 'asset_library'
   const canDeleteNode = node.kind !== 'transcript_source'
+  const transcriptOutputArtifacts = transcriptConfig
+    ? transcriptConfig.promptProgram.outputSchema.map((field) => ({
+        field,
+        artifact: [...artifacts]
+          .filter((artifact) => artifact.outputId === field.captureKey)
+          .sort((left, right) => right.updatedAt - left.updatedAt)[0],
+      }))
+    : []
 
   const runNode = (message?: string, requestedCount?: number) => {
     void executeNode(node.id, { message, requestedCount })
+  }
+
+  const renameCurrentNode = () => {
+    const nextLabel = window.prompt('Rename node', node.label)
+    if (!nextLabel || nextLabel.trim() === node.label) return
+    void renameNode(node.id, nextLabel)
+  }
+
+  const duplicateCurrentNode = () => {
+    void duplicateNode(node.id)
+  }
+
+  const disconnectCurrentNode = () => {
+    void disconnectNode(node.id)
   }
 
   const updatePromptBuilderOutput = (
@@ -499,6 +652,37 @@ function CanvasLabNodeComponent({ data }: any) {
     }))
   }
 
+  const updateTranscriptPromptProgram = (
+    updater: (config: CanvasNodeConfigMap['transcript_source']) => CanvasNodeConfigMap['transcript_source'],
+  ) => {
+    void updateNodeConfig(node.id, (current) => updater(current as CanvasNodeConfigMap['transcript_source']))
+  }
+
+  const updateTranscriptInputField = (fieldId: string, value: string | number | boolean) => {
+    updateTranscriptPromptProgram((current) => ({
+      ...current,
+      promptProgram: setPromptProgramInputValue(current.promptProgram, fieldId, value),
+    }))
+  }
+
+  const updateTranscriptOutputFieldConfig = (
+    outputId: string,
+    updater: (field: PromptProgramOutputField) => PromptProgramOutputField,
+  ) => {
+    updateTranscriptPromptProgram((current) => ({
+      ...current,
+      promptProgram: updatePromptProgramOutputField(current.promptProgram, outputId, updater),
+    }))
+  }
+  const enabledTranscriptOutputCount =
+    transcriptConfig?.promptProgram.outputSchema.filter((field) => field.enabled).length || 0
+
+  const transcriptHasOutputTypeConflict = (outputId: string, outputType: PromptOutputType) =>
+    outputType !== 'generic' &&
+    transcriptConfig?.promptProgram.outputSchema.some(
+      (field) => field.id !== outputId && field.outputType === outputType,
+    )
+
   return (
     <>
       <Handle
@@ -506,11 +690,24 @@ function CanvasLabNodeComponent({ data }: any) {
         position={Position.Left}
         className="!h-3 !w-3 !border-2 !border-background !bg-primary/80"
       />
-      <Card className="w-[320px] overflow-hidden rounded-[1.35rem] border-border/80 bg-card/95 shadow-[0_18px_40px_rgba(0,0,0,0.12)]">
+      <TooltipProvider delayDuration={150}>
+        <div className="relative w-[320px] pt-5">
+          <Badge
+            variant="outline"
+            className={cn(
+              'pointer-events-none absolute left-4 top-0 z-10 rounded-full bg-background/95 text-[10px] uppercase shadow-sm backdrop-blur',
+              statusClassNames[node.status as keyof typeof statusClassNames] || statusClassNames.idle,
+            )}
+          >
+            {node.status}
+          </Badge>
+      <Card className="overflow-hidden rounded-[1.35rem] border-border/80 bg-card/95 shadow-[0_18px_40px_rgba(0,0,0,0.12)]">
         <NodeHeader
           label={node.label}
-          status={node.status}
           kind={node.kind}
+          onRename={renameCurrentNode}
+          onDuplicate={node.kind !== 'transcript_source' ? duplicateCurrentNode : undefined}
+          onDisconnect={disconnectCurrentNode}
           onToggleContentSize={canToggleContentSize ? () => setIsContentExpanded((current) => !current) : undefined}
           isContentExpanded={isContentExpanded}
           onDelete={canDeleteNode
@@ -543,12 +740,7 @@ function CanvasLabNodeComponent({ data }: any) {
               <Textarea
                 value={transcriptConfig?.transcript || ''}
                 onChange={(event) => {
-                  const transcript = event.target.value
-                  void updateNodeConfig(node.id, (current) => ({
-                    ...(current as CanvasNodeConfigMap['transcript_source']),
-                    transcript,
-                    artifacts: deriveTranscriptArtifacts(transcript),
-                  }))
+                  updateTranscriptInputField(TRANSCRIPT_SOURCE_INPUT_IDS.transcript, event.target.value)
                 }}
                 className="min-h-36 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
                 placeholder="Paste transcript here, or import from Packaging."
@@ -582,269 +774,462 @@ function CanvasLabNodeComponent({ data }: any) {
                 This node auto-derives the digest, timestamp map, and key hooks for downstream nodes.
               </p>
               {transcriptConfig ? (
-                <div className="overflow-hidden rounded-[1rem] border border-border/65 bg-background/55">
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors hover:bg-background/60"
-                    onClick={() => setIsTranscriptGuidanceOpen((current) => !current)}
-                    aria-expanded={isTranscriptGuidanceOpen}
-                  >
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-foreground">Optional guidance</p>
-                        {guidanceCount > 0 ? (
-                          <Badge variant="outline" className="rounded-full bg-background/70 text-[10px] uppercase">
-                            {guidanceCount} set
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <p className="text-xs leading-5 text-muted-foreground">
-                        {guidanceSummaryText(transcriptConfig.brief)}
-                      </p>
-                    </div>
-                    <ChevronDown
-                      className={cn(
-                        'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
-                        isTranscriptGuidanceOpen && 'rotate-180',
-                      )}
-                    />
-                  </button>
-
-                  {isTranscriptGuidanceOpen ? (
-                    <div className="space-y-3 border-t border-border/60 px-3.5 py-3">
-                      <div className="space-y-2">
-                        <Label htmlFor={`${node.id}-must-include`} className="text-xs text-muted-foreground">
-                          Must include
-                        </Label>
-                        <Input
-                          id={`${node.id}-must-include`}
-                          value={transcriptConfig.brief.mustInclude}
-                          onChange={(event) => {
-                            const value = event.target.value
-                            void updateNodeConfig(node.id, (current) => ({
-                              ...(current as CanvasNodeConfigMap['transcript_source']),
-                              brief: {
-                                ...(current as CanvasNodeConfigMap['transcript_source']).brief,
-                                mustInclude: value,
-                              },
-                            }))
-                          }}
-                          className="rounded-[0.95rem] border-border/65 bg-background/80"
-                          placeholder="Required words, angles, or brand names"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor={`${node.id}-nice-to-include`} className="text-xs text-muted-foreground">
-                          Nice to include
-                        </Label>
-                        <Input
-                          id={`${node.id}-nice-to-include`}
-                          value={transcriptConfig.brief.niceToInclude}
-                          onChange={(event) => {
-                            const value = event.target.value
-                            void updateNodeConfig(node.id, (current) => ({
-                              ...(current as CanvasNodeConfigMap['transcript_source']),
-                              brief: {
-                                ...(current as CanvasNodeConfigMap['transcript_source']).brief,
-                                niceToInclude: value,
-                              },
-                            }))
-                          }}
-                          className="rounded-[0.95rem] border-border/65 bg-background/80"
-                          placeholder="Helpful extras if they fit"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor={`${node.id}-avoid-words`} className="text-xs text-muted-foreground">
-                          Words to avoid
-                        </Label>
-                        <Input
-                          id={`${node.id}-avoid-words`}
-                          value={transcriptConfig.brief.avoidWords}
-                          onChange={(event) => {
-                            const value = event.target.value
-                            void updateNodeConfig(node.id, (current) => ({
-                              ...(current as CanvasNodeConfigMap['transcript_source']),
-                              brief: {
-                                ...(current as CanvasNodeConfigMap['transcript_source']).brief,
-                                avoidWords: value,
-                              },
-                            }))
-                          }}
-                          className="rounded-[0.95rem] border-border/65 bg-background/80"
-                          placeholder="Terms you do not want in the output"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor={`${node.id}-packaging-directions`} className="text-xs text-muted-foreground">
-                          Packaging directions
-                        </Label>
-                        <Textarea
-                          id={`${node.id}-packaging-directions`}
-                          value={transcriptConfig.brief.additionalContext}
-                          onChange={(event) => {
-                            const value = event.target.value
-                            void updateNodeConfig(node.id, (current) => ({
-                              ...(current as CanvasNodeConfigMap['transcript_source']),
-                              brief: {
-                                ...(current as CanvasNodeConfigMap['transcript_source']).brief,
-                                additionalContext: value,
-                              },
-                            }))
-                          }}
-                          className="min-h-24 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
-                          placeholder="Audience, tone, packaging direction, or channel context"
-                          onWheelCapture={handleTextareaWheelCapture}
-                        />
-                      </div>
-
-                      <div className="rounded-[0.95rem] border border-border/65 bg-background/70 p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="space-y-1">
-                            <Label htmlFor={`${node.id}-timestamps`} className="text-sm font-medium text-foreground">
-                              Prefer transcript timestamps
-                            </Label>
-                            <p className="text-xs leading-5 text-muted-foreground">
-                              Use transcript timestamps when chapters or timing-sensitive outputs need them.
-                            </p>
-                          </div>
-                          <Switch
-                            id={`${node.id}-timestamps`}
-                            checked={transcriptConfig.brief.transcriptIncludeTimestamps}
-                            onCheckedChange={(checked) => {
-                              void updateNodeConfig(node.id, (current) => ({
-                                ...(current as CanvasNodeConfigMap['transcript_source']),
-                                brief: {
-                                  ...(current as CanvasNodeConfigMap['transcript_source']).brief,
-                                  transcriptIncludeTimestamps: checked,
-                                },
-                              }))
-                            }}
-                          />
+                <div className="space-y-3">
+                  <div className="overflow-hidden rounded-[1rem] border border-border/65 bg-background/55">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors hover:bg-background/60"
+                      onClick={() => setIsTranscriptGuidanceOpen((current) => !current)}
+                      aria-expanded={isTranscriptGuidanceOpen}
+                    >
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-foreground">Optional inputs</p>
+                          {guidanceCount > 0 ? (
+                            <Badge variant="outline" className="rounded-full bg-background/70 text-[10px] uppercase">
+                              {guidanceCount} set
+                            </Badge>
+                          ) : null}
                         </div>
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          {guidanceSummaryText(transcriptConfig.brief)}
+                        </p>
                       </div>
+                      <ChevronDown
+                        className={cn(
+                          'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+                          isTranscriptGuidanceOpen && 'rotate-180',
+                        )}
+                      />
+                    </button>
 
-                      <div className="rounded-[0.95rem] border border-border/65 bg-background/70 p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="space-y-1">
-                            <Label htmlFor={`${node.id}-include-name`} className="text-sm font-medium text-foreground">
-                              Include a specific name
-                            </Label>
-                            <p className="text-xs leading-5 text-muted-foreground">
-                              Use this when titles should anchor to a person, channel, or brand.
-                            </p>
-                          </div>
-                          <Switch
-                            id={`${node.id}-include-name`}
-                            checked={transcriptConfig.brief.includeName}
-                            onCheckedChange={(checked) => {
-                              void updateNodeConfig(node.id, (current) => ({
-                                ...(current as CanvasNodeConfigMap['transcript_source']),
-                                brief: {
-                                  ...(current as CanvasNodeConfigMap['transcript_source']).brief,
-                                  includeName: checked,
-                                },
-                              }))
+                    {isTranscriptGuidanceOpen ? (
+                      <div className="space-y-3 border-t border-border/60 px-3.5 py-3">
+                        <div className="space-y-2">
+                          <Label htmlFor={`${node.id}-must-include`} className="text-xs text-muted-foreground">
+                            Must include
+                          </Label>
+                          <Input
+                            id={`${node.id}-must-include`}
+                            value={transcriptConfig.brief.mustInclude}
+                            onChange={(event) => {
+                              updateTranscriptInputField(TRANSCRIPT_SOURCE_INPUT_IDS.mustInclude, event.target.value)
                             }}
+                            className="rounded-[0.95rem] border-border/65 bg-background/80"
+                            placeholder="Required words, angles, or brand names"
                           />
                         </div>
 
-                        {transcriptConfig.brief.includeName ? (
-                          <div className="mt-3 space-y-2">
-                            <Label htmlFor={`${node.id}-name-for-titles`} className="text-xs text-muted-foreground">
-                              Name to include in titles
-                            </Label>
-                            <Input
-                              id={`${node.id}-name-for-titles`}
-                              value={transcriptConfig.brief.nameForTitles}
-                              onChange={(event) => {
-                                const value = event.target.value
-                                void updateNodeConfig(node.id, (current) => ({
-                                  ...(current as CanvasNodeConfigMap['transcript_source']),
-                                  brief: {
-                                    ...(current as CanvasNodeConfigMap['transcript_source']).brief,
-                                    nameForTitles: value,
-                                  },
-                                }))
+                        <div className="space-y-2">
+                          <Label htmlFor={`${node.id}-nice-to-include`} className="text-xs text-muted-foreground">
+                            Nice to include
+                          </Label>
+                          <Input
+                            id={`${node.id}-nice-to-include`}
+                            value={transcriptConfig.brief.niceToInclude}
+                            onChange={(event) => {
+                              updateTranscriptInputField(TRANSCRIPT_SOURCE_INPUT_IDS.niceToInclude, event.target.value)
+                            }}
+                            className="rounded-[0.95rem] border-border/65 bg-background/80"
+                            placeholder="Helpful extras if they fit"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor={`${node.id}-avoid-words`} className="text-xs text-muted-foreground">
+                            Words to avoid
+                          </Label>
+                          <Input
+                            id={`${node.id}-avoid-words`}
+                            value={transcriptConfig.brief.avoidWords}
+                            onChange={(event) => {
+                              updateTranscriptInputField(TRANSCRIPT_SOURCE_INPUT_IDS.wordsToAvoid, event.target.value)
+                            }}
+                            className="rounded-[0.95rem] border-border/65 bg-background/80"
+                            placeholder="Terms you do not want in the output"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor={`${node.id}-packaging-directions`} className="text-xs text-muted-foreground">
+                            Additional context
+                          </Label>
+                          <Textarea
+                            id={`${node.id}-packaging-directions`}
+                            value={transcriptConfig.brief.additionalContext}
+                            onChange={(event) => {
+                              updateTranscriptInputField(TRANSCRIPT_SOURCE_INPUT_IDS.additionalContext, event.target.value)
+                            }}
+                            className="min-h-24 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
+                            placeholder="Audience, tone, packaging direction, or channel context"
+                            onWheelCapture={handleTextareaWheelCapture}
+                          />
+                        </div>
+
+                        <div className="rounded-[0.95rem] border border-border/65 bg-background/70 p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <Label htmlFor={`${node.id}-timestamps`} className="text-sm font-medium text-foreground">
+                                Prefer transcript timestamps
+                              </Label>
+                              <p className="text-xs leading-5 text-muted-foreground">
+                                Use transcript timestamps when chapters or timing-sensitive outputs need them.
+                              </p>
+                            </div>
+                            <Switch
+                              id={`${node.id}-timestamps`}
+                              checked={transcriptConfig.brief.transcriptIncludeTimestamps}
+                              onCheckedChange={(checked) => {
+                                updateTranscriptInputField(TRANSCRIPT_SOURCE_INPUT_IDS.preferTimestamps, checked)
                               }}
-                              className="rounded-[0.95rem] border-border/65 bg-background/80"
-                              placeholder="Person, brand, or channel name"
                             />
                           </div>
-                        ) : null}
-                      </div>
-
-                      <div className="rounded-[0.95rem] border border-border/65 bg-background/70 p-3">
-                        <div className="space-y-1">
-                          <p className="text-sm font-medium text-foreground">Generated outputs</p>
-                          <p className="text-xs leading-5 text-muted-foreground">
-                            Checked outputs are generated when you run Transcript Source. Unchecked outputs stay on canvas if they already exist, but future transcript runs skip them.
-                          </p>
                         </div>
 
-                        <div className="mt-3 space-y-2">
-                          {PACKAGING_OUTPUT_NODE_KINDS.map((kind) => {
-                            const selection = transcriptConfig.selectedOutputs[kind]
-                            return (
-                              <div
-                                key={kind}
-                                className="flex items-center gap-3 rounded-[0.9rem] border border-border/60 bg-background/80 px-3 py-2.5"
-                              >
-                                <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <p className="text-sm font-medium text-foreground">
-                                      {OUTPUT_SELECTION_LABELS[kind]}
-                                    </p>
-                                    <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                                      {selection.enabled ? 'Included' : 'Skipped'}
-                                    </p>
-                                  </div>
-                                  {kind !== 'core_hook' ? (
-                                    <Input
-                                      type="number"
-                                      min={1}
-                                      value={String(selection.count)}
-                                      onChange={(event) => {
-                                        const value = Math.max(1, Number(event.target.value) || 1)
-                                        void updateNodeConfig(node.id, (current) => ({
-                                          ...(current as CanvasNodeConfigMap['transcript_source']),
-                                          selectedOutputs: {
-                                            ...(current as CanvasNodeConfigMap['transcript_source']).selectedOutputs,
-                                            [kind]: {
-                                              ...(current as CanvasNodeConfigMap['transcript_source']).selectedOutputs[kind],
-                                              count: value,
-                                            },
-                                          },
-                                        }))
-                                      }}
-                                      className="h-9 w-20 rounded-[0.8rem] border-border/65 bg-background/90 text-center"
-                                    />
-                                  ) : null}
+                        <div className="rounded-[0.95rem] border border-border/65 bg-background/70 p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <Label htmlFor={`${node.id}-include-name`} className="text-sm font-medium text-foreground">
+                                Include specific name
+                              </Label>
+                              <p className="text-xs leading-5 text-muted-foreground">
+                                Use this when titles should anchor to a person, channel, or brand.
+                              </p>
+                            </div>
+                            <Switch
+                              id={`${node.id}-include-name`}
+                              checked={transcriptConfig.brief.includeName}
+                              onCheckedChange={(checked) => {
+                                updateTranscriptInputField(TRANSCRIPT_SOURCE_INPUT_IDS.includeSpecificName, checked)
+                              }}
+                            />
+                          </div>
+
+                          {transcriptConfig.brief.includeName ? (
+                            <div className="mt-3 space-y-2">
+                              <Label htmlFor={`${node.id}-name-for-titles`} className="text-xs text-muted-foreground">
+                                Specific name
+                              </Label>
+                              <Input
+                                id={`${node.id}-name-for-titles`}
+                                value={transcriptConfig.brief.nameForTitles}
+                                onChange={(event) => {
+                                  updateTranscriptInputField(TRANSCRIPT_SOURCE_INPUT_IDS.specificName, event.target.value)
+                                }}
+                                className="rounded-[0.95rem] border-border/65 bg-background/80"
+                                placeholder="Person, brand, or channel name"
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="overflow-hidden rounded-[1rem] border border-border/65 bg-background/55">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors hover:bg-background/60"
+                      onClick={() => setIsTranscriptOutputsOpen((current) => !current)}
+                      aria-expanded={isTranscriptOutputsOpen}
+                    >
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-foreground">Output settings</p>
+                          <Badge variant="outline" className="rounded-full bg-background/70 text-[10px] uppercase">
+                            {enabledTranscriptOutputCount} enabled
+                          </Badge>
+                        </div>
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          Add, remove, reorder, and reshape Transcript Source outputs without code changes.
+                        </p>
+                      </div>
+                      <ChevronDown
+                        className={cn(
+                          'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+                          isTranscriptOutputsOpen && 'rotate-180',
+                        )}
+                      />
+                    </button>
+
+                    {isTranscriptOutputsOpen ? (
+                      <div className="space-y-3 border-t border-border/60 px-3.5 py-3">
+                        <div className="flex justify-end">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 rounded-full px-3"
+                            onClick={() => {
+                              updateTranscriptPromptProgram((current) => ({
+                                ...current,
+                                promptProgram: addPromptProgramOutputField(
+                                  current.promptProgram,
+                                  createPromptProgramOutputField({
+                                    label: `Output ${current.promptProgram.outputSchema.length + 1}`,
+                                    outputType: 'generic',
+                                  }),
+                                ),
+                              }))
+                            }}
+                          >
+                            <Plus className="mr-2 h-4 w-4" />
+                            Add Output
+                          </Button>
+                        </div>
+
+                        <div className="space-y-2">
+                          {transcriptConfig.promptProgram.outputSchema.map((output) => (
+                            <div key={output.id} className="rounded-[1rem] border border-border/65 bg-background/80 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-foreground">{output.label}</p>
+                                  <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                                    {promptOutputTypeLabel({
+                                      outputId: output.captureKey,
+                                      label: output.label,
+                                      enabled: output.enabled,
+                                      requestedCount: output.count,
+                                      presentation: output.grouping === 'combined' ? 'combined_block' : 'rows',
+                                      promptHint: output.promptHint,
+                                      outputType: output.outputType,
+                                    })} · {outputFieldSummary(output)}
+                                  </p>
                                 </div>
-                                <Switch
-                                  checked={selection.enabled}
-                                  onCheckedChange={(checked) => {
-                                    void updateNodeConfig(node.id, (current) => ({
-                                      ...(current as CanvasNodeConfigMap['transcript_source']),
-                                      selectedOutputs: {
-                                        ...(current as CanvasNodeConfigMap['transcript_source']).selectedOutputs,
-                                        [kind]: {
-                                          ...(current as CanvasNodeConfigMap['transcript_source']).selectedOutputs[kind],
-                                          enabled: checked,
-                                        },
-                                      },
-                                    }))
-                                  }}
-                                />
+                                <div className="flex items-center gap-1">
+                                  <IconActionButton
+                                    label="Move output up"
+                                    forceVisible
+                                    onClick={() => {
+                                      updateTranscriptPromptProgram((current) => ({
+                                        ...current,
+                                        promptProgram: movePromptProgramOutputField(current.promptProgram, output.id, 'up'),
+                                      }))
+                                    }}
+                                  >
+                                    <ArrowUp className="h-3.5 w-3.5" />
+                                  </IconActionButton>
+                                  <IconActionButton
+                                    label="Move output down"
+                                    forceVisible
+                                    onClick={() => {
+                                      updateTranscriptPromptProgram((current) => ({
+                                        ...current,
+                                        promptProgram: movePromptProgramOutputField(current.promptProgram, output.id, 'down'),
+                                      }))
+                                    }}
+                                  >
+                                    <ArrowDown className="h-3.5 w-3.5" />
+                                  </IconActionButton>
+                                  <Switch
+                                    checked={output.enabled}
+                                    onCheckedChange={(checked) => {
+                                      updateTranscriptOutputFieldConfig(output.id, (current) => ({
+                                        ...current,
+                                        enabled: checked,
+                                      }))
+                                    }}
+                                  />
+                                  <IconActionButton
+                                    label={`Remove ${output.label}`}
+                                    forceVisible
+                                    className="text-destructive hover:text-destructive"
+                                    onClick={() => {
+                                      updateTranscriptPromptProgram((current) => ({
+                                        ...current,
+                                        promptProgram: removePromptProgramOutputField(current.promptProgram, output.id),
+                                      }))
+                                    }}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </IconActionButton>
+                                </div>
                               </div>
-                            )
-                          })}
+
+                              <div className="mt-3 grid grid-cols-2 gap-2">
+                                <div className="space-y-2">
+                                  <Label className="text-xs text-muted-foreground">Label</Label>
+                                  <Input
+                                    value={output.label}
+                                    onChange={(event) => {
+                                      updateTranscriptOutputFieldConfig(output.id, (current) => ({
+                                        ...current,
+                                        label: event.target.value,
+                                      }))
+                                    }}
+                                    className="rounded-[0.95rem] border-border/65 bg-background/80"
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label className="text-xs text-muted-foreground">Count</Label>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    value={String(output.count)}
+                                    onChange={(event) => {
+                                      const value = Math.max(1, Number(event.target.value) || 1)
+                                      updateTranscriptOutputFieldConfig(output.id, (current) => ({
+                                        ...current,
+                                        count: value,
+                                      }))
+                                    }}
+                                    className="rounded-[0.95rem] border-border/65 bg-background/80"
+                                  />
+                                </div>
+                                <div className="col-span-2 space-y-2">
+                                  <Label className="text-xs text-muted-foreground">Output type</Label>
+                                  <Select
+                                    value={output.outputType}
+                                    onValueChange={(value) => {
+                                      const nextType = value as PromptOutputType
+                                      if (transcriptHasOutputTypeConflict(output.id, nextType)) {
+                                        toast.error('Transcript Source can only have one output for each built-in packaging type.')
+                                        return
+                                      }
+
+                                      const nextDefaults = createPromptProgramOutputField({
+                                        outputType: nextType,
+                                      })
+                                      updateTranscriptOutputFieldConfig(output.id, (current) => ({
+                                        ...current,
+                                        outputType: nextType,
+                                        responseType: nextDefaults.responseType,
+                                        grouping: nextDefaults.grouping,
+                                      }))
+                                    }}
+                                  >
+                                    <SelectTrigger className="rounded-[0.95rem] border-border/65 bg-background/80">
+                                      <SelectValue placeholder="Output type" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {PROMPT_OUTPUT_TYPE_OPTIONS.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label className="text-xs text-muted-foreground">Response shape</Label>
+                                  <Select
+                                    value={output.responseType}
+                                    onValueChange={(value) => {
+                                      updateTranscriptOutputFieldConfig(output.id, (current) => ({
+                                        ...current,
+                                        responseType: value as PromptProgramOutputField['responseType'],
+                                      }))
+                                    }}
+                                  >
+                                    <SelectTrigger className="rounded-[0.95rem] border-border/65 bg-background/80">
+                                      <SelectValue placeholder="Response shape" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="text_item_list">Item list</SelectItem>
+                                      <SelectItem value="combined_block">Combined block</SelectItem>
+                                      <SelectItem value="table">Table</SelectItem>
+                                      <SelectItem value="code_block">Code block</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label className="text-xs text-muted-foreground">Grouping</Label>
+                                  <Select
+                                    value={output.grouping}
+                                    onValueChange={(value) => {
+                                      updateTranscriptOutputFieldConfig(output.id, (current) => ({
+                                        ...current,
+                                        grouping: value as PromptProgramOutputField['grouping'],
+                                      }))
+                                    }}
+                                  >
+                                    <SelectTrigger className="rounded-[0.95rem] border-border/65 bg-background/80">
+                                      <SelectValue placeholder="Grouping" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="separate">Separate</SelectItem>
+                                      <SelectItem value="combined">Combined</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="col-span-2 space-y-2">
+                                  <Label className="text-xs text-muted-foreground">Description</Label>
+                                  <Textarea
+                                    value={output.description}
+                                    onChange={(event) => {
+                                      updateTranscriptOutputFieldConfig(output.id, (current) => ({
+                                        ...current,
+                                        description: event.target.value,
+                                      }))
+                                    }}
+                                    className="min-h-20 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
+                                    placeholder="What this output should capture."
+                                    onWheelCapture={handleTextareaWheelCapture}
+                                  />
+                                </div>
+                                <div className="col-span-2 space-y-2">
+                                  <Label className="text-xs text-muted-foreground">Prompt hint</Label>
+                                  <Textarea
+                                    value={output.promptHint}
+                                    onChange={(event) => {
+                                      updateTranscriptOutputFieldConfig(output.id, (current) => ({
+                                        ...current,
+                                        promptHint: event.target.value,
+                                      }))
+                                    }}
+                                    className="min-h-20 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
+                                    placeholder="Optional extra direction just for this output."
+                                    onWheelCapture={handleTextareaWheelCapture}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                    </div>
+                    ) : null}
+                  </div>
+
+                  {transcriptOutputArtifacts.some((entry) => entry.artifact) ? (
+                    <ScrollArea
+                      className="pr-2"
+                      onWheelCapture={handleScrollAreaWheelCapture}
+                    >
+                      <div className="space-y-3">
+                        {transcriptOutputArtifacts.map(({ field, artifact }) => {
+                          if (!artifact) return null
+
+                          return (
+                            <div key={field.id} className="space-y-2 rounded-[1rem] border border-border/65 bg-background/60 p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-medium text-foreground">{field.label}</p>
+                                  <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                                    {outputFieldSummary(field)}
+                                  </p>
+                                </div>
+                              </div>
+                              {field.grouping === 'combined' || artifact.items.length === 0 ? (
+                                <CopyableContentBlock
+                                  content={artifact.content?.trim() || artifact.items.map((item) => item.text).join('\n')}
+                                />
+                              ) : (
+                                <div className="space-y-2">
+                                  {artifact.items.map((item) => (
+                                    <ArtifactItemRow
+                                      key={item.id}
+                                      artifact={artifact}
+                                      item={item}
+                                      asset={item.assetId ? assetsById[item.assetId] : undefined}
+                                    />
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </ScrollArea>
                   ) : null}
                 </div>
               ) : null}
@@ -1094,20 +1479,6 @@ function CanvasLabNodeComponent({ data }: any) {
                 </p>
               </div>
 
-              <Textarea
-                value={promptOutputConfig.promptHint}
-                onChange={(event) => {
-                  const value = event.target.value
-                  updatePromptBuilderOutput(promptOutputConfig.builderNodeId, promptOutputConfig.outputId, (current) => ({
-                    ...current,
-                    promptHint: value,
-                  }))
-                }}
-                className="min-h-20 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
-                placeholder="Refinement hint for this output."
-                onWheelCapture={handleTextareaWheelCapture}
-              />
-
               {latestArtifact ? (
                 <ScrollArea
                   className={cn('pr-2', !isContentExpanded && 'max-h-60')}
@@ -1145,19 +1516,6 @@ function CanvasLabNodeComponent({ data }: any) {
 
           {isPackagingOutputNode ? (
             <>
-              <Textarea
-                value={(node.config as CanvasNodeConfigMap['titles']).draftInstruction}
-                onChange={(event) => {
-                  const value = event.target.value
-                  void updateNodeConfig(node.id, (current) => ({
-                    ...(current as CanvasNodeConfigMap['titles']),
-                    draftInstruction: value,
-                  }))
-                }}
-                className="min-h-20 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
-                placeholder="Direction for the next run, for example: darker, more direct, more curious."
-                onWheelCapture={handleTextareaWheelCapture}
-              />
               {latestArtifact ? (
                 <ScrollArea
                   className={cn('pr-2', !isContentExpanded && 'max-h-60')}
@@ -1244,19 +1602,6 @@ function CanvasLabNodeComponent({ data }: any) {
                   </SelectContent>
                 </Select>
               </div>
-              <Textarea
-                value={(node.config as CanvasNodeConfigMap['chat']).draftPrompt}
-                onChange={(event) => {
-                  const value = event.target.value
-                  void updateNodeConfig(node.id, (current) => ({
-                    ...(current as CanvasNodeConfigMap['chat']),
-                    draftPrompt: value,
-                  }))
-                }}
-                className="min-h-24 rounded-[1rem] border-border/65 bg-background/80 shadow-none"
-                placeholder="Ask a research or follow-up question."
-                onWheelCapture={handleTextareaWheelCapture}
-              />
               <ScrollArea
                 className={cn('pr-2', !isContentExpanded && 'max-h-48')}
                 onWheelCapture={handleScrollAreaWheelCapture}
@@ -1471,7 +1816,15 @@ function CanvasLabNodeComponent({ data }: any) {
         ) : null}
 
         {node.kind === 'chat' ? (
-          <RunFooter
+          <RefinementRail
+            value={(node.config as CanvasNodeConfigMap['chat']).draftPrompt}
+            onChange={(value) => {
+              void updateNodeConfig(node.id, (current) => ({
+                ...(current as CanvasNodeConfigMap['chat']),
+                draftPrompt: value,
+              }))
+            }}
+            placeholder="Ask a research or follow-up question."
             onRun={() => runNode((node.config as CanvasNodeConfigMap['chat']).draftPrompt)}
             isRunning={isRunning}
             primaryLabel={latestArtifact ? 'Refine' : 'Run'}
@@ -1487,7 +1840,16 @@ function CanvasLabNodeComponent({ data }: any) {
         ) : null}
 
         {node.kind === 'prompt_output' ? (
-          <RunFooter
+          <RefinementRail
+            value={promptOutputConfig?.promptHint || ''}
+            onChange={(value) => {
+              if (!promptOutputConfig) return
+              updatePromptBuilderOutput(promptOutputConfig.builderNodeId, promptOutputConfig.outputId, (current) => ({
+                ...current,
+                promptHint: value,
+              }))
+            }}
+            placeholder="Refinement hint for this output."
             onRun={() => runNode()}
             isRunning={isRunning}
             primaryLabel={latestArtifact ? 'Refine' : 'Run'}
@@ -1495,7 +1857,15 @@ function CanvasLabNodeComponent({ data }: any) {
         ) : null}
 
         {['titles', 'thumbnail_copy'].includes(node.kind) ? (
-          <RunFooter
+          <RefinementRail
+            value={(node.config as CanvasNodeConfigMap['titles']).draftInstruction}
+            onChange={(value) => {
+              void updateNodeConfig(node.id, (current) => ({
+                ...(current as CanvasNodeConfigMap['titles']),
+                draftInstruction: value,
+              }))
+            }}
+            placeholder="Direction for the next run, for example: darker, more direct, more curious."
             onRun={() => runNode((node.config as CanvasNodeConfigMap['titles']).draftInstruction)}
             onRunFiveMore={() => runNode((node.config as CanvasNodeConfigMap['titles']).draftInstruction || 'Give me 5 more in a fresh direction.', 5)}
             onRunTenMore={() => runNode((node.config as CanvasNodeConfigMap['titles']).draftInstruction || 'Give me 10 more in a fresh direction.', 10)}
@@ -1505,14 +1875,32 @@ function CanvasLabNodeComponent({ data }: any) {
           />
         ) : null}
 
-        {['core_hook', 'description', 'chapters', 'hashtags', 'image_prompt', 'image_generate'].includes(node.kind) ? (
-          <RunFooter
+        {['core_hook', 'description', 'chapters', 'hashtags', 'image_prompt'].includes(node.kind) ? (
+          <RefinementRail
+            value={(node.config as CanvasNodeConfigMap['titles']).draftInstruction}
+            onChange={(value) => {
+              void updateNodeConfig(node.id, (current) => ({
+                ...(current as CanvasNodeConfigMap['titles']),
+                draftInstruction: value,
+              }))
+            }}
+            placeholder="Direction for the next run, for example: sharper, simpler, more grounded."
             onRun={() => runNode((node.config as CanvasNodeConfigMap['titles']).draftInstruction)}
             isRunning={isRunning}
             primaryLabel={latestArtifact ? 'Refine' : 'Run'}
           />
         ) : null}
+
+        {node.kind === 'image_generate' ? (
+          <RunFooter
+            onRun={() => runNode()}
+            isRunning={isRunning}
+            primaryLabel={latestArtifact ? 'Refine' : 'Run'}
+          />
+        ) : null}
       </Card>
+        </div>
+      </TooltipProvider>
       <Handle
         type="source"
         position={Position.Right}
