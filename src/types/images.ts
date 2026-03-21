@@ -9,7 +9,7 @@ export type ImageSize = '1K' | '2K'
 export type ImageAssetKind = 'reference' | 'result'
 export type ImageTurnStatus = 'queued' | 'running' | 'complete' | 'failed' | 'canceled' | 'paused'
 export type ImageTurnOrigin = 'new' | 'variant' | 'edit'
-export type ImageGridZoom = 'compact' | 'list' | 'detail'
+export type ImageViewMode = 'grid' | 'detail'
 
 export interface ImageAssetMeta {
   id: string
@@ -73,14 +73,15 @@ export interface ImagePipeline {
   updatedAt: number
 }
 
-export const IMAGE_THREAD_SNAPSHOT_VERSION = 3 as const
+export const IMAGE_THREAD_SNAPSHOT_VERSION = 4 as const
 
 export interface ImageThreadSnapshot {
   version: typeof IMAGE_THREAD_SNAPSHOT_VERSION
   turns: ImageTurn[]
   draft: ImageDraft
   composerDrawingData: DrawingData | null
-  gridZoom: ImageGridZoom
+  viewMode: ImageViewMode
+  gridColumns: number
   queuePaused: boolean
   pipelines: ImagePipeline[]
 }
@@ -107,12 +108,14 @@ export const IMAGE_GENERATION_MODELS: ImageGenerationModelOption[] = [
 export const IMAGE_COUNT_OPTIONS = [1, 2, 4] as const
 export const IMAGE_ASPECT_RATIO_OPTIONS: ImageAspectRatio[] = ['1:1', '3:2', '16:9', '9:16']
 export const IMAGE_SIZE_OPTIONS: ImageSize[] = ['1K', '2K']
-export const IMAGE_GRID_ZOOM_OPTIONS: Array<{ id: ImageGridZoom; label: string }> = [
-  { id: 'compact', label: 'Compact' },
-  { id: 'list', label: 'List' },
+export const IMAGE_VIEW_MODE_OPTIONS: Array<{ id: ImageViewMode; label: string }> = [
+  { id: 'grid', label: 'Grid' },
   { id: 'detail', label: 'Detail' },
 ]
 export const MAX_IMAGE_REFERENCE_COUNT = 14
+export const DEFAULT_IMAGE_GRID_COLUMNS = 5
+export const MIN_IMAGE_GRID_COLUMNS = 2
+export const MAX_IMAGE_GRID_COLUMNS = 10
 
 export const DEFAULT_IMAGE_DRAFT: ImageDraft = {
   prompt: '',
@@ -123,4 +126,27 @@ export const DEFAULT_IMAGE_DRAFT: ImageDraft = {
   referenceAssetIds: [],
   origin: 'new',
   pipelineId: null,
+}
+
+export function normalizeImageViewMode(
+  viewMode: string | undefined,
+  legacyGridZoom?: string,
+): ImageViewMode {
+  if (viewMode === 'grid' || viewMode === 'detail') return viewMode
+  if (legacyGridZoom === 'detail') return 'detail'
+  if (legacyGridZoom === 'compact' || legacyGridZoom === 'list' || legacyGridZoom === 'comfortable') {
+    return 'grid'
+  }
+  return 'grid'
+}
+
+export function normalizeImageGridColumns(value: number | undefined): number {
+  const numericValue = typeof value === 'number' ? value : Number.NaN
+
+  if (!Number.isFinite(numericValue)) return DEFAULT_IMAGE_GRID_COLUMNS
+
+  return Math.min(
+    MAX_IMAGE_GRID_COLUMNS,
+    Math.max(MIN_IMAGE_GRID_COLUMNS, Math.round(numericValue)),
+  )
 }

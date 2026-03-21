@@ -35,6 +35,7 @@ import {
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
@@ -69,7 +70,6 @@ import type {
   ImageAspectRatio,
   ImageDraft,
   ImageGenerationModel,
-  ImageGridZoom,
   ImagePipeline,
   ImageSize,
   ImageTurn,
@@ -80,9 +80,11 @@ import {
   IMAGE_ASPECT_RATIO_OPTIONS,
   IMAGE_COUNT_OPTIONS,
   IMAGE_GENERATION_MODELS,
-  IMAGE_GRID_ZOOM_OPTIONS,
   IMAGE_SIZE_OPTIONS,
+  IMAGE_VIEW_MODE_OPTIONS,
+  MAX_IMAGE_GRID_COLUMNS,
   MAX_IMAGE_REFERENCE_COUNT,
+  MIN_IMAGE_GRID_COLUMNS,
 } from '@/types/images'
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -92,15 +94,10 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
   minute: '2-digit',
 })
 
-const gridMinWidthByZoom: Record<ImageGridZoom, number> = {
-  compact: 160,
-  list: 220,
-  detail: 320,
-}
-
 const COMPACT_COMPOSER_DEFAULT_PROMPT_HEIGHT = 160
 const COMPACT_COMPOSER_MIN_PROMPT_HEIGHT = 120
 const COMPACT_COMPOSER_MAX_PROMPT_HEIGHT = 360
+const DETAIL_RESULT_COLUMN_WIDTH = '320px'
 
 interface ViewerSelection {
   turnId: string
@@ -114,6 +111,14 @@ interface TurnViewerItem {
   asset: ImageAsset
   kind: 'reference' | 'result'
   position: number
+}
+
+interface GridResultItem {
+  turnId: string
+  assetId: string
+  asset: ImageAsset
+  position: number
+  createdAt: number
 }
 
 interface ComposerContextMeta {
@@ -230,6 +235,13 @@ function buildViewerAssetOrder(
   const resultAssetIds = resultAssets.map((asset) => asset.id)
 
   return [...referenceAssetIds, ...resultAssetIds]
+}
+
+function buildResultViewerAssetOrder(
+  turn: ImageTurn,
+  assetsById: Record<string, ImageAsset>,
+) {
+  return resolveTurnAssets(turn, assetsById).resultAssets.map((asset) => asset.id)
 }
 
 function getViewerItemLabel(item: TurnViewerItem) {
@@ -450,6 +462,16 @@ function isDraftDirty(draft: ImageDraft) {
   )
 }
 
+function hasClearableDraftState(draft: ImageDraft) {
+  return Boolean(
+    draft.prompt.trim()
+    || draft.referenceAssetIds.length > 0
+    || draft.origin !== 'new'
+    || draft.sourceTurnId
+    || draft.pipelineId
+  )
+}
+
 function getComposerContextMeta(
   draft: ImageDraft,
   activePipeline: ImagePipeline | null,
@@ -502,7 +524,8 @@ export default function ImageGenerationTool() {
     pipelines,
     draft,
     composerDrawingData,
-    gridZoom,
+    viewMode,
+    gridColumns,
     queuePaused,
     hydrate,
     setDraftPrompt,
@@ -526,7 +549,8 @@ export default function ImageGenerationTool() {
     enqueueDraft,
     pauseQueue,
     resumeQueue,
-    setGridZoom,
+    setViewMode,
+    setGridColumns,
     markTurnRunning,
     completeTurn,
     failTurn,
@@ -551,6 +575,9 @@ export default function ImageGenerationTool() {
   const [libraryAssetPendingDelete, setLibraryAssetPendingDelete] = useState<ImageAsset | null>(null)
 
   const isCompactComposer = searchParams.get('composer') === 'compact'
+  const isSmallViewport = useMediaQuery('(max-width: 639px)')
+  const isMediumViewport = useMediaQuery('(max-width: 1023px)')
+  const isGridView = viewMode === 'grid'
 
   useEffect(() => {
     void hydrate()
@@ -562,7 +589,6 @@ export default function ImageGenerationTool() {
   )
   const queuedTurns = useMemo(() => turns.filter((turn) => turn.status === 'queued'), [turns])
   const pausedTurns = useMemo(() => turns.filter((turn) => turn.status === 'paused'), [turns])
-  const failedTurns = useMemo(() => turns.filter((turn) => turn.status === 'failed'), [turns])
   const draftReferenceAssets = useMemo(
     () => draft.referenceAssetIds.map((assetId) => assetsById[assetId]).filter(Boolean),
     [assetsById, draft.referenceAssetIds]
@@ -589,6 +615,29 @@ export default function ImageGenerationTool() {
     () => [...pipelines].sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt),
     [pipelines]
   )
+  const gridResultItems = useMemo<GridResultItem[]>(
+    () => [...turns]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .flatMap((turn) => {
+        const { resultAssets } = resolveTurnAssets(turn, assetsById)
+        return resultAssets.map((asset, index) => ({
+          turnId: turn.id,
+          assetId: asset.id,
+          asset,
+          position: index + 1,
+          createdAt: turn.createdAt,
+        }))
+      }),
+    [assetsById, turns]
+  )
+  const gridTurnsNeedingAttention = useMemo(
+    () => turns.filter((turn) => turn.status === 'queued' || turn.status === 'running' || turn.status === 'paused' || turn.status === 'failed'),
+    [turns]
+  )
+  const effectiveGridColumns = useMemo(() => {
+    const columnLimit = isSmallViewport ? 2 : isMediumViewport ? 5 : MAX_IMAGE_GRID_COLUMNS
+    return Math.min(gridColumns, columnLimit)
+  }, [gridColumns, isMediumViewport, isSmallViewport])
   const selectedTurn = useMemo(
     () => (selectedImage ? turns.find((turn) => turn.id === selectedImage.turnId) ?? null : null),
     [selectedImage, turns]
@@ -621,6 +670,7 @@ export default function ImageGenerationTool() {
   )
   const referenceUsageLabel = `${draft.referenceAssetIds.length}/${MAX_IMAGE_REFERENCE_COUNT} refs`
   const isComposerDirty = useMemo(() => isDraftDirty(draft), [draft])
+  const canClearComposer = useMemo(() => hasClearableDraftState(draft), [draft])
   const composerContext = useMemo(
     () => getComposerContextMeta(draft, activePipeline),
     [activePipeline, draft]
@@ -633,6 +683,7 @@ export default function ImageGenerationTool() {
   }, [turns])
 
   useEffect(() => {
+    if (viewMode !== 'detail') return
     if (!tailSignature || tailSignature === previousTailSignatureRef.current) return
     previousTailSignatureRef.current = tailSignature
 
@@ -645,7 +696,7 @@ export default function ImageGenerationTool() {
         behavior: 'smooth',
       })
     })
-  }, [tailSignature])
+  }, [tailSignature, viewMode])
 
   useEffect(() => {
     if (selectedImage && (!selectedTurn || !selectedViewerItem)) {
@@ -779,6 +830,11 @@ export default function ImageGenerationTool() {
     })
   }, [])
 
+  const handleClearDraft = useCallback(async () => {
+    await resetDraft()
+    focusComposer()
+  }, [focusComposer, resetDraft])
+
   const handlePromptResizeMove = useCallback((event: PointerEvent) => {
     const resizeState = promptResizeStateRef.current
     if (!resizeState) return
@@ -832,7 +888,7 @@ export default function ImageGenerationTool() {
     )
   }, [])
 
-  const openViewer = useCallback((turnId: string, assetId: string) => {
+  const openTurnViewer = useCallback((turnId: string, assetId: string) => {
     const turn = turns.find((entry) => entry.id === turnId)
     if (!turn) return
 
@@ -840,6 +896,17 @@ export default function ImageGenerationTool() {
       turnId,
       assetId,
       assetIds: buildViewerAssetOrder(turn, assetsById),
+    })
+  }, [assetsById, turns])
+
+  const openResultViewer = useCallback((turnId: string, assetId: string) => {
+    const turn = turns.find((entry) => entry.id === turnId)
+    if (!turn) return
+
+    setSelectedImage({
+      turnId,
+      assetId,
+      assetIds: buildResultViewerAssetOrder(turn, assetsById),
     })
   }, [assetsById, turns])
 
@@ -1176,99 +1243,169 @@ export default function ImageGenerationTool() {
     void runTurn(nextTurn)
   }, [isHydrated, queuePaused, queuedTurns, runTurn, runningTurn])
 
-  const queueSummary = useMemo(() => {
-    const parts: string[] = []
-    if (runningTurn) parts.push('1 running')
-    if (queuedTurns.length > 0) parts.push(`${queuedTurns.length} queued`)
-    if (pausedTurns.length > 0) parts.push(`${pausedTurns.length} paused`)
-    if (failedTurns.length > 0) parts.push(`${failedTurns.length} failed`)
-    return parts.length > 0 ? parts.join(' • ') : 'Idle'
-  }, [failedTurns.length, pausedTurns.length, queuedTurns.length, runningTurn])
-
-  const isListView = gridZoom === 'list'
-  const masonryColumnWidth = `${gridMinWidthByZoom[gridZoom]}px`
+  const masonryColumnWidth = DETAIL_RESULT_COLUMN_WIDTH
 
   return (
     <ToolShell>
       <ToolHeader
         title="Image Gen"
-        description="Persistent Nano Banana image conversations with reusable assets, saved pipelines, queueing, and versioning."
+        actions={(
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {isGridView ? (
+              <div className="flex items-center gap-2 rounded-[0.9rem] border border-border/70 bg-muted/20 px-3 py-2">
+                <label htmlFor="image-grid-columns" className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                  Grid size
+                </label>
+                <input
+                  id="image-grid-columns"
+                  type="range"
+                  min={String(MIN_IMAGE_GRID_COLUMNS)}
+                  max={String(MAX_IMAGE_GRID_COLUMNS)}
+                  step="1"
+                  value={gridColumns}
+                  onChange={(event) => {
+                    void setGridColumns(Number(event.target.value))
+                  }}
+                  className="w-24 accent-foreground sm:w-32"
+                  aria-label="Adjust grid density"
+                />
+                <span className="w-2 text-right text-xs font-medium text-foreground">{gridColumns}</span>
+              </div>
+            ) : null}
+
+            <div className="flex items-center gap-1 rounded-[0.9rem] bg-muted/75 p-1 shadow-[inset_0_0_0_1px_hsl(var(--border)/0.5)]">
+              {IMAGE_VIEW_MODE_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => {
+                    void setViewMode(option.id)
+                  }}
+                  className={cn(
+                    'rounded-[0.7rem] px-3 py-1.5 text-[13px] font-medium transition-[color,background-color,box-shadow]',
+                    viewMode === option.id
+                      ? 'bg-background text-foreground shadow-[0_1px_2px_hsl(var(--foreground)/0.05)]'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            {(queuePaused || pausedTurns.length > 0) ? (
+              <Button type="button" size="sm" onClick={() => void resumeQueue()}>
+                <Play className="h-4 w-4" />
+                Resume queue
+              </Button>
+            ) : queuedTurns.length > 0 ? (
+              <Button type="button" size="sm" variant="outline" onClick={() => void pauseQueue()}>
+                <Pause className="h-4 w-4" />
+                Pause queue
+              </Button>
+            ) : null}
+          </div>
+        )}
       />
 
       <ToolBody className="overflow-hidden p-0">
         <div className="flex h-full min-h-0 flex-col">
-          <div className="border-b border-border/70 px-5 py-2.5">
-            <ToolContainer className="space-y-3">
-              <div className="flex w-full flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">Stored locally in this browser</Badge>
-                  <Badge variant={runningTurn ? 'secondary' : 'outline'}>{queueSummary}</Badge>
-                  <Badge variant="outline">{turns.length} turn{turns.length === 1 ? '' : 's'}</Badge>
-                  <Badge variant="outline">{referenceUsageLabel}</Badge>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1 rounded-[0.9rem] bg-muted/75 p-1 shadow-[inset_0_0_0_1px_hsl(var(--border)/0.5)]">
-                    {IMAGE_GRID_ZOOM_OPTIONS.map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() => {
-                          void setGridZoom(option.id)
-                        }}
-                        className={cn(
-                          'rounded-[0.7rem] px-3 py-1.5 text-[13px] font-medium transition-[color,background-color,box-shadow]',
-                          gridZoom === option.id
-                            ? 'bg-background text-foreground shadow-[0_1px_2px_hsl(var(--foreground)/0.05)]'
-                            : 'text-muted-foreground hover:text-foreground'
-                        )}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {(queuePaused || pausedTurns.length > 0) ? (
-                    <Button type="button" size="sm" onClick={() => void resumeQueue()}>
-                      <Play className="h-4 w-4" />
-                      Resume queue
-                    </Button>
-                  ) : queuedTurns.length > 0 ? (
-                    <Button type="button" size="sm" variant="outline" onClick={() => void pauseQueue()}>
-                      <Pause className="h-4 w-4" />
-                      Pause queue
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" size="sm" variant="outline" onClick={() => setIsPipelineDialogOpen(true)}>
-                  Pipelines
-                  <Badge variant="secondary" className="ml-1">{pipelines.length}</Badge>
-                </Button>
-                <Button type="button" size="sm" variant="outline" onClick={() => setIsLibraryDialogOpen(true)}>
-                  Asset library
-                  <Badge variant="secondary" className="ml-1">{reusableAssets.length}</Badge>
-                </Button>
-                {activePipeline ? (
-                  <Badge variant="secondary" className="rounded-full px-3 py-1.5">
-                    Active pipeline: {activePipeline.name}
-                  </Badge>
-                ) : (
-                  <Badge variant="outline">Freeform draft</Badge>
-                )}
-              </div>
-            </ToolContainer>
-          </div>
-
           <div className="relative flex min-h-0 flex-1 flex-col">
             <div
               ref={threadScrollRef}
               className="flex-1 overflow-y-auto px-4 pt-5 sm:px-6"
               style={{ paddingBottom: composerBottomPadding }}
             >
-              <ToolContainer className="space-y-0">
+              {isGridView ? (
+                <div className="w-full pb-4">
+                  {hydrationError ? (
+                    <Card className="border-destructive/40 bg-destructive/5">
+                      <CardContent className="p-4 text-sm text-foreground">
+                        {hydrationError}
+                      </CardContent>
+                    </Card>
+                  ) : null}
+
+                  {!isHydrated || isHydrating ? (
+                    <div className="flex min-h-[20rem] items-center justify-center rounded-3xl border border-dashed border-border/80 bg-muted/20">
+                      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading image generations...
+                      </div>
+                    </div>
+                  ) : turns.length === 0 ? (
+                    <div className="flex min-h-[20rem] flex-col items-center justify-center rounded-[2rem] border border-dashed border-border/80 bg-muted/20 px-6 text-center">
+                      <div className="rounded-2xl bg-secondary p-3 text-secondary-foreground">
+                        <WandSparkles className="h-5 w-5" />
+                      </div>
+                      <h2 className="mt-4 text-lg font-semibold text-foreground">
+                        Start an image conversation
+                      </h2>
+                      <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                        Generated results, reusable assets, prompts, pipelines, and queue state stay saved locally on this device. Use the composer below to create a first image, pull in library assets, or save a repeatable pipeline.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {gridTurnsNeedingAttention.length > 0 ? (
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-border/70 bg-muted/18 px-4 py-3">
+                          <p className="text-sm text-muted-foreground">
+                            {gridTurnsNeedingAttention.length} batch{gridTurnsNeedingAttention.length === 1 ? '' : 'es'} still in progress or need attention. Switch to detail for live queue status and retries.
+                          </p>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              void setViewMode('detail')
+                            }}
+                          >
+                            Open detail
+                          </Button>
+                        </div>
+                      ) : null}
+
+                      {gridResultItems.length === 0 ? (
+                        <div className="flex min-h-[20rem] flex-col items-center justify-center rounded-[2rem] border border-dashed border-border/80 bg-muted/20 px-6 text-center">
+                          <div className="rounded-2xl bg-secondary p-3 text-secondary-foreground">
+                            <WandSparkles className="h-5 w-5" />
+                          </div>
+                          <h2 className="mt-4 text-lg font-semibold text-foreground">
+                            No completed images yet
+                          </h2>
+                          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                            Completed generations will appear here as a full-width gallery. Use detail view for turn-by-turn queue status while your batches are running.
+                          </p>
+                        </div>
+                      ) : (
+                        <div
+                          className="w-full"
+                          style={{ columnGap: '0.75rem', columnCount: effectiveGridColumns }}
+                        >
+                          {gridResultItems.map((item) => (
+                            <button
+                              key={item.assetId}
+                              type="button"
+                              onClick={() => openResultViewer(item.turnId, item.assetId)}
+                              className="group mb-3 block w-full break-inside-avoid overflow-hidden rounded-[1.35rem] border border-border/70 bg-card/90 text-left shadow-sm transition-transform hover:-translate-y-0.5"
+                            >
+                              <img
+                                src={item.asset.url}
+                                alt={`Generated result ${item.position} from ${dateFormatter.format(item.createdAt)}`}
+                                className="block h-auto w-full"
+                              />
+                              <span className="sr-only">
+                                Open generated result {item.position} from {dateFormatter.format(item.createdAt)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <ToolContainer className="space-y-0">
                 <div className="flex w-full flex-col gap-4 pb-4">
                   {hydrationError ? (
                     <Card className="border-destructive/40 bg-destructive/5">
@@ -1371,140 +1508,72 @@ export default function ImageGenerationTool() {
                               </div>
 
                               {turn.status === 'complete' && resultAssets.length > 0 ? (
-                                isListView ? (
-                                  <div className="space-y-2">
-                                    {resultAssets.map((asset, index) => (
-                                      <button
-                                        key={asset.id}
-                                        type="button"
-                                        onClick={() => openViewer(turn.id, asset.id)}
-                                        className="group grid w-full grid-cols-[7.5rem_minmax(0,1fr)_1rem] items-start gap-4 overflow-hidden rounded-[1rem] border border-border/70 bg-muted/18 px-3 py-3 text-left transition-[background-color,border-color] hover:bg-muted/28"
-                                      >
-                                        <div className="overflow-hidden rounded-[0.85rem] border border-border/60 bg-background/75 p-1.5">
-                                          <img
-                                            src={asset.url}
-                                            alt={`Generated result ${index + 1}`}
-                                            className="block h-auto w-full rounded-[0.65rem]"
-                                          />
-                                        </div>
+                                <div
+                                  className="w-full"
+                                  style={{ columnGap: '0.75rem', columnWidth: masonryColumnWidth }}
+                                >
+                                  {resultAssets.map((asset, index) => (
+                                    <button
+                                      key={asset.id}
+                                      type="button"
+                                      onClick={() => openResultViewer(turn.id, asset.id)}
+                                      className="group mb-3 block w-full break-inside-avoid overflow-hidden rounded-[1.25rem] border border-border/70 bg-muted/30 text-left transition-transform hover:-translate-y-0.5"
+                                    >
+                                      <div className="overflow-hidden border-b border-border/60 bg-background/75 p-2">
+                                        <img
+                                          src={asset.url}
+                                          alt={`Generated result ${index + 1}`}
+                                          className="block h-auto w-full rounded-[0.9rem]"
+                                        />
+                                      </div>
+                                      <div className="flex items-center justify-between gap-3 px-3 py-3">
                                         <div className="min-w-0">
                                           <p className="text-sm font-medium text-foreground">Result {index + 1}</p>
-                                          <p className="mt-1 truncate text-xs text-muted-foreground">
-                                            {turn.aspectRatio} • {turn.imageSize} • {modelLabel(turn.model)}
-                                          </p>
-                                          <p className="mt-2 text-xs text-muted-foreground">
-                                            Open prompt, refs, version actions, and download.
+                                          <p className="truncate text-xs text-muted-foreground">
+                                            Click for prompt, refs, version actions, and download
                                           </p>
                                         </div>
                                         <CheckCircle2 className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
-                                      </button>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <div
-                                    className="w-full"
-                                    style={{ columnGap: '0.75rem', columnWidth: masonryColumnWidth }}
-                                  >
-                                    {resultAssets.map((asset, index) => (
-                                      <button
-                                        key={asset.id}
-                                        type="button"
-                                        onClick={() => openViewer(turn.id, asset.id)}
-                                        className="group mb-3 block w-full break-inside-avoid overflow-hidden rounded-[1.25rem] border border-border/70 bg-muted/30 text-left transition-transform hover:-translate-y-0.5"
-                                      >
-                                        <div className="overflow-hidden border-b border-border/60 bg-background/75 p-2">
-                                          <img
-                                            src={asset.url}
-                                            alt={`Generated result ${index + 1}`}
-                                            className="block h-auto w-full rounded-[0.9rem]"
-                                          />
-                                        </div>
-                                        <div className="flex items-center justify-between gap-3 px-3 py-3">
-                                          <div className="min-w-0">
-                                            <p className="text-sm font-medium text-foreground">Result {index + 1}</p>
-                                            <p className="truncate text-xs text-muted-foreground">
-                                              Click for prompt, refs, version actions, and download
-                                            </p>
-                                          </div>
-                                          <CheckCircle2 className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
-                                        </div>
-                                      </button>
-                                    ))}
-                                  </div>
-                                )
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
                               ) : (
-                                isListView ? (
-                                  <div className="space-y-2">
-                                    {Array.from({ length: turn.count }).map((_, index) => (
+                                <div
+                                  className="w-full"
+                                  style={{ columnGap: '0.75rem', columnWidth: masonryColumnWidth }}
+                                >
+                                  {Array.from({ length: turn.count }).map((_, index) => (
+                                    <div
+                                      key={`${turn.id}-placeholder-${index}`}
+                                      className={cn(
+                                        'mb-3 break-inside-avoid overflow-hidden rounded-[1.25rem] border border-dashed border-border/80 bg-muted/20',
+                                        turn.status === 'running' && 'animate-pulse'
+                                      )}
+                                    >
                                       <div
-                                        key={`${turn.id}-placeholder-${index}`}
-                                        className={cn(
-                                          'grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-4 rounded-[1rem] border border-dashed border-border/80 bg-muted/16 px-3 py-3',
-                                          turn.status === 'running' && 'animate-pulse',
-                                        )}
+                                        className="flex flex-col items-center justify-center px-4 text-center"
+                                        style={{ aspectRatio: placeholderAspectRatio }}
                                       >
-                                        <div
-                                          className="flex w-full items-center justify-center rounded-[0.85rem] bg-background/55"
-                                          style={{ aspectRatio: placeholderAspectRatio }}
-                                        >
-                                          {turn.status === 'running' ? (
-                                            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                                          ) : (
-                                            <Clock3 className="h-5 w-5 text-muted-foreground" />
-                                          )}
-                                        </div>
-                                        <div>
-                                          <p className="text-sm font-medium text-foreground">
-                                            Result {index + 1} • {getStatusLabel(turn.status)}
-                                          </p>
-                                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                                            {turn.status === 'queued' && 'Waiting for its turn in the FIFO queue.'}
-                                            {turn.status === 'paused' && 'Resume the queue to continue.'}
-                                            {turn.status === 'failed' && 'Open details or retry this generation.'}
-                                            {turn.status === 'canceled' && 'This generation was canceled before finishing.'}
-                                            {turn.status === 'running' && 'Gemini is generating this batch now.'}
-                                          </p>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <div
-                                    className="w-full"
-                                    style={{ columnGap: '0.75rem', columnWidth: masonryColumnWidth }}
-                                  >
-                                    {Array.from({ length: turn.count }).map((_, index) => (
-                                      <div
-                                        key={`${turn.id}-placeholder-${index}`}
-                                        className={cn(
-                                          'mb-3 break-inside-avoid overflow-hidden rounded-[1.25rem] border border-dashed border-border/80 bg-muted/20',
-                                          turn.status === 'running' && 'animate-pulse'
+                                        {turn.status === 'running' ? (
+                                          <Loader2 className="mb-3 h-5 w-5 animate-spin text-muted-foreground" />
+                                        ) : (
+                                          <Clock3 className="mb-3 h-5 w-5 text-muted-foreground" />
                                         )}
-                                      >
-                                        <div
-                                          className="flex flex-col items-center justify-center px-4 text-center"
-                                          style={{ aspectRatio: placeholderAspectRatio }}
-                                        >
-                                          {turn.status === 'running' ? (
-                                            <Loader2 className="mb-3 h-5 w-5 animate-spin text-muted-foreground" />
-                                          ) : (
-                                            <Clock3 className="mb-3 h-5 w-5 text-muted-foreground" />
-                                          )}
-                                          <p className="text-sm font-medium text-foreground">
-                                            {getStatusLabel(turn.status)}
-                                          </p>
-                                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                                            {turn.status === 'queued' && 'Waiting for its turn in the FIFO queue.'}
-                                            {turn.status === 'paused' && 'Resume the queue to continue.'}
-                                            {turn.status === 'failed' && 'Open details or retry this generation.'}
-                                            {turn.status === 'canceled' && 'This generation was canceled before finishing.'}
-                                            {turn.status === 'running' && 'Gemini is generating this batch now.'}
-                                          </p>
-                                        </div>
+                                        <p className="text-sm font-medium text-foreground">
+                                          {getStatusLabel(turn.status)}
+                                        </p>
+                                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                                          {turn.status === 'queued' && 'Waiting for its turn in the FIFO queue.'}
+                                          {turn.status === 'paused' && 'Resume the queue to continue.'}
+                                          {turn.status === 'failed' && 'Open details or retry this generation.'}
+                                          {turn.status === 'canceled' && 'This generation was canceled before finishing.'}
+                                          {turn.status === 'running' && 'Gemini is generating this batch now.'}
+                                        </p>
                                       </div>
-                                    ))}
-                                  </div>
-                                )
+                                    </div>
+                                  ))}
+                                </div>
                               )}
 
                               {isExpanded ? (
@@ -1557,7 +1626,7 @@ export default function ImageGenerationTool() {
                                             <button
                                               key={asset.id}
                                               type="button"
-                                              onClick={() => openViewer(turn.id, asset.id)}
+                                              onClick={() => openTurnViewer(turn.id, asset.id)}
                                               className="mb-3 block w-full break-inside-avoid overflow-hidden rounded-2xl border border-border/70 bg-card text-left transition-[border-color,background-color] hover:border-foreground/15 hover:bg-muted/18"
                                             >
                                               <div className="overflow-hidden border-b border-border/60 bg-background/75 p-2">
@@ -1595,16 +1664,25 @@ export default function ImageGenerationTool() {
                   )}
                 </div>
               </ToolContainer>
+              )}
             </div>
 
             <div
               ref={composerOverlayRef}
               className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:px-6"
             >
-              <div className="pointer-events-auto mx-auto w-fit max-w-full">
+              <div
+                className={cn(
+                  'pointer-events-auto mx-auto max-w-full',
+                  isCompactComposer ? 'w-fit' : 'w-full max-w-[64rem]'
+                )}
+              >
                 <div className="pt-1">
                   <div
-                    className="overflow-hidden rounded-[1.45rem] border border-border/70 bg-background/96 shadow-[0_10px_30px_hsl(var(--background)/0.45)] backdrop-blur-sm transition-[border-color,box-shadow] duration-200 focus-within:border-ring/40"
+                    className={cn(
+                      'overflow-hidden rounded-[1.45rem] border border-border/70 bg-background/96 shadow-[0_10px_30px_hsl(var(--background)/0.45)] backdrop-blur-sm transition-[border-color,box-shadow] duration-200 focus-within:border-ring/40',
+                      !isCompactComposer && 'w-full'
+                    )}
                     onDrop={handleComposerDrop}
                     onDragOver={(event) => event.preventDefault()}
                   >
@@ -1704,7 +1782,7 @@ export default function ImageGenerationTool() {
                                 </DropdownMenu>
                               ) : null}
 
-                              {isComposerDirty ? (
+                              {canClearComposer ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Button
@@ -1713,7 +1791,7 @@ export default function ImageGenerationTool() {
                                       size="sm"
                                       className="h-9 rounded-full px-3"
                                       onClick={() => {
-                                        void resetDraft()
+                                        void handleClearDraft()
                                       }}
                                     >
                                       <X className="h-4 w-4" />
@@ -1939,7 +2017,7 @@ export default function ImageGenerationTool() {
                                 size="sm"
                                 variant="ghost"
                                 onClick={() => {
-                                  void resetDraft()
+                                  void handleClearDraft()
                                 }}
                               >
                                 <X className="h-4 w-4" />
@@ -1962,7 +2040,7 @@ export default function ImageGenerationTool() {
                               size="sm"
                               variant="ghost"
                               onClick={() => {
-                                void resetDraft()
+                                void handleClearDraft()
                               }}
                             >
                               <X className="h-4 w-4" />
@@ -2022,8 +2100,8 @@ export default function ImageGenerationTool() {
                           />
                         </div>
 
-                        <div className="flex flex-wrap items-end gap-2 px-4 pb-3 pt-1 md:flex-nowrap">
-                          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                        <div className="overflow-x-auto px-4 pb-3 pt-1">
+                          <div className="flex min-w-max items-end gap-2 pr-1">
                             <Button type="button" variant="ghost" size="sm" className="h-9 shrink-0 rounded-[0.85rem]" onClick={() => fileInputRef.current?.click()}>
                               <Upload className="h-4 w-4" />
                               Upload new
@@ -2052,8 +2130,23 @@ export default function ImageGenerationTool() {
                               Add from library
                             </Button>
 
+                            {!activePipeline && draft.origin === 'new' && !draft.sourceTurnId && canClearComposer ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-9 shrink-0 rounded-[0.85rem]"
+                                onClick={() => {
+                                  void handleClearDraft()
+                                }}
+                              >
+                                <X className="h-4 w-4" />
+                                Clear
+                              </Button>
+                            ) : null}
+
                             <Select value={draft.model} onValueChange={(value) => { void setDraftModel(value as ImageGenerationModel) }}>
-                              <SelectTrigger className="h-9 min-w-[10.5rem] flex-1 basis-[11rem] rounded-[0.85rem] bg-background/70 sm:max-w-[11rem] sm:flex-none">
+                              <SelectTrigger className="h-9 min-w-[10.5rem] shrink-0 rounded-[0.85rem] bg-background/70">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -2103,31 +2196,34 @@ export default function ImageGenerationTool() {
                                 ))}
                               </SelectContent>
                             </Select>
-                          </div>
 
-                          <div className="ml-auto flex shrink-0 flex-col items-start gap-1 md:items-end">
-                            <p className="text-xs text-muted-foreground">{referenceUsageLabel}</p>
-                            <Button
-                              type="button"
-                              onClick={() => {
-                                void handleEnqueue()
-                              }}
-                              disabled={!isHydrated || !draft.prompt.trim()}
-                              className="h-9 min-w-[11.25rem] rounded-[0.85rem]"
-                            >
-                              {runningTurn ? <Sparkles className="h-4 w-4" /> : <WandSparkles className="h-4 w-4" />}
-                              {runningTurn || queuePaused ? 'Add to queue' : 'Generate'}
-                            </Button>
-                            {runningTurn ? (
-                              <button
+                            <span className="ml-1 shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+                              {referenceUsageLabel}
+                            </span>
+
+                            <div className="ml-1 flex shrink-0 flex-col items-start gap-1">
+                              <Button
                                 type="button"
-                                onClick={handleCancelCurrent}
-                                className="inline-flex h-7 items-center gap-1.5 rounded-[0.75rem] px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                                onClick={() => {
+                                  void handleEnqueue()
+                                }}
+                                disabled={!isHydrated || !draft.prompt.trim()}
+                                className="h-9 min-w-[11.25rem] rounded-[0.85rem]"
                               >
-                                <Square className="h-3 w-3 fill-current" />
-                                Cancel current
-                              </button>
-                            ) : null}
+                                {runningTurn ? <Sparkles className="h-4 w-4" /> : <WandSparkles className="h-4 w-4" />}
+                                {runningTurn || queuePaused ? 'Add to queue' : 'Generate'}
+                              </Button>
+                              {runningTurn ? (
+                                <button
+                                  type="button"
+                                  onClick={handleCancelCurrent}
+                                  className="inline-flex h-7 items-center gap-1.5 rounded-[0.75rem] px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                                >
+                                  <Square className="h-3 w-3 fill-current" />
+                                  Cancel current
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
                         </div>
                       </>
@@ -2693,7 +2789,9 @@ export default function ImageGenerationTool() {
                           <button
                             key={item.assetId}
                             type="button"
-                            onClick={() => openViewer(item.turnId, item.assetId)}
+                            onClick={() => {
+                              setSelectedImage((current) => current ? { ...current, assetId: item.assetId } : current)
+                            }}
                             className={cn(
                               'w-full rounded-[1.1rem] border border-border/70 bg-background/80 p-3 text-left transition-[border-color,background-color]',
                               item.assetId === selectedViewerItem.assetId

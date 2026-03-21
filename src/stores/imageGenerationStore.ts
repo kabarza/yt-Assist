@@ -6,17 +6,20 @@ import type {
   ImageAspectRatio,
   ImageDraft,
   ImageGenerationModel,
-  ImageGridZoom,
   ImagePipeline,
   ImageSize,
   ImageThreadSnapshot,
   ImageTurn,
+  ImageViewMode,
   StoredImageAsset,
 } from '../types/images'
 import {
+  DEFAULT_IMAGE_GRID_COLUMNS,
   DEFAULT_IMAGE_DRAFT,
   IMAGE_THREAD_SNAPSHOT_VERSION,
   MAX_IMAGE_REFERENCE_COUNT,
+  normalizeImageGridColumns,
+  normalizeImageViewMode,
 } from '../types/images'
 import {
   deleteImageGenerationAssets,
@@ -36,7 +39,8 @@ interface ImageGenerationStore {
   pipelines: ImagePipeline[]
   draft: ImageDraft
   composerDrawingData: DrawingData | null
-  gridZoom: ImageGridZoom
+  viewMode: ImageViewMode
+  gridColumns: number
   queuePaused: boolean
   hydrate: () => Promise<void>
   setDraftPrompt: (prompt: string) => Promise<void>
@@ -61,7 +65,8 @@ interface ImageGenerationStore {
   enqueueDraft: () => Promise<string | null>
   pauseQueue: () => Promise<void>
   resumeQueue: () => Promise<void>
-  setGridZoom: (gridZoom: ImageGridZoom) => Promise<void>
+  setViewMode: (viewMode: ImageViewMode) => Promise<void>
+  setGridColumns: (gridColumns: number) => Promise<void>
   markTurnRunning: (turnId: string) => Promise<void>
   completeTurn: (
     turnId: string,
@@ -154,14 +159,15 @@ function buildDraftFromPipeline(pipeline: ImagePipeline): ImageDraft {
 }
 
 function buildSnapshot(
-  state: Pick<ImageGenerationStore, 'turns' | 'draft' | 'composerDrawingData' | 'gridZoom' | 'queuePaused' | 'pipelines'>
+  state: Pick<ImageGenerationStore, 'turns' | 'draft' | 'composerDrawingData' | 'viewMode' | 'gridColumns' | 'queuePaused' | 'pipelines'>
 ): ImageThreadSnapshot {
   return {
     version: IMAGE_THREAD_SNAPSHOT_VERSION,
     turns: state.turns,
     draft: state.draft,
     composerDrawingData: state.composerDrawingData,
-    gridZoom: state.gridZoom,
+    viewMode: state.viewMode,
+    gridColumns: state.gridColumns,
     queuePaused: state.queuePaused,
     pipelines: sortPipelines(state.pipelines),
   }
@@ -237,12 +243,6 @@ function sanitizeDraft(
   }
 }
 
-function normalizeGridZoom(gridZoom: string | undefined): ImageGridZoom {
-  if (gridZoom === 'comfortable') return 'list'
-  if (gridZoom === 'compact' || gridZoom === 'detail' || gridZoom === 'list') return gridZoom
-  return 'list'
-}
-
 function sanitizeTurns(turns: ImageTurn[] | undefined, availableAssetIds: Set<string>) {
   let shouldPauseQueue = false
 
@@ -270,7 +270,7 @@ function sanitizeTurns(turns: ImageTurn[] | undefined, availableAssetIds: Set<st
 }
 
 async function persistSnapshotFromState(
-  state: Pick<ImageGenerationStore, 'turns' | 'draft' | 'composerDrawingData' | 'gridZoom' | 'queuePaused' | 'pipelines'>
+  state: Pick<ImageGenerationStore, 'turns' | 'draft' | 'composerDrawingData' | 'viewMode' | 'gridColumns' | 'queuePaused' | 'pipelines'>
 ) {
   await saveImageGenerationSnapshot(buildSnapshot(state))
 }
@@ -336,7 +336,8 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
     pipelines: [],
     draft: DEFAULT_IMAGE_DRAFT,
     composerDrawingData: null,
-    gridZoom: 'list',
+    viewMode: 'grid',
+    gridColumns: DEFAULT_IMAGE_GRID_COLUMNS,
     queuePaused: false,
 
     hydrate: async () => {
@@ -360,7 +361,12 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
           const { normalizedTurns, shouldPauseQueue } = sanitizeTurns(snapshot?.turns, availableAssetIds)
           const draft = sanitizeDraft(snapshot?.draft, availableAssetIds, availablePipelineIds)
           const composerDrawingData = snapshot?.composerDrawingData ?? null
-          const gridZoom = normalizeGridZoom(snapshot?.gridZoom)
+          const legacyGridZoom =
+            snapshot && 'gridZoom' in snapshot
+              ? (snapshot as ImageThreadSnapshot & { gridZoom?: string }).gridZoom
+              : undefined
+          const viewMode = normalizeImageViewMode(snapshot?.viewMode, legacyGridZoom)
+          const gridColumns = normalizeImageGridColumns(snapshot?.gridColumns)
           const queuePaused = shouldPauseQueue ? true : (snapshot?.queuePaused ?? false)
 
           set({
@@ -371,7 +377,8 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
             pipelines,
             draft,
             composerDrawingData,
-            gridZoom,
+            viewMode,
+            gridColumns,
             queuePaused,
           })
 
@@ -379,7 +386,8 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
             !snapshot ||
             snapshot.version !== IMAGE_THREAD_SNAPSHOT_VERSION ||
             shouldPauseQueue ||
-            snapshot.gridZoom !== gridZoom ||
+            snapshot.viewMode !== viewMode ||
+            snapshot.gridColumns !== gridColumns ||
             snapshot.queuePaused !== queuePaused ||
             JSON.stringify(snapshot.turns ?? []) !== JSON.stringify(normalizedTurns) ||
             JSON.stringify(snapshot.draft ?? DEFAULT_IMAGE_DRAFT) !== JSON.stringify(draft) ||
@@ -390,7 +398,8 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
               turns: normalizedTurns,
               draft,
               composerDrawingData,
-              gridZoom,
+              viewMode,
+              gridColumns,
               queuePaused,
               pipelines,
             })
@@ -789,8 +798,13 @@ export const useImageGenerationStore = create<ImageGenerationStore>((set, get) =
       await persistSnapshot()
     },
 
-    setGridZoom: async (gridZoom) => {
-      set({ gridZoom })
+    setViewMode: async (viewMode) => {
+      set({ viewMode })
+      await persistSnapshot()
+    },
+
+    setGridColumns: async (gridColumns) => {
+      set({ gridColumns: normalizeImageGridColumns(gridColumns) })
       await persistSnapshot()
     },
 

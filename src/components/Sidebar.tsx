@@ -665,7 +665,6 @@ export default function Sidebar({
                 <ImageIcon className="h-4 w-4 shrink-0" />
                 <div>
                   <p className="text-sm font-medium">Image Gen</p>
-                  <p className="text-xs text-muted-foreground">Nano Banana 2 & Pro</p>
                 </div>
               </button>
             </TooltipTrigger>
