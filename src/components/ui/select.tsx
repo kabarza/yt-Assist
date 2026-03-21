@@ -16,7 +16,7 @@ function SelectTrigger({ className, children, ref, ...props }: React.ComponentPr
       ref={ref}
       data-slot="select-trigger"
       className={cn(
-        "flex h-10 w-full items-center justify-between whitespace-nowrap rounded-lg border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground/90 outline-none transition-[color,box-shadow,border-color] focus-visible:ring-[3px] focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
+        "flex h-10 w-full items-center justify-between whitespace-nowrap rounded-lg border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground/90 outline-none transition-[color,background-color,box-shadow,border-color] focus-visible:ring-2 focus-visible:ring-ring/20 data-[state=open]:border-border/90 data-[state=open]:bg-accent/25 data-[state=open]:shadow-[0_0_0_1px_hsl(var(--border)/0.45)] disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
         className
       )}
       {...props}

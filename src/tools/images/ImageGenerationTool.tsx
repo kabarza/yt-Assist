@@ -26,6 +26,7 @@ import {
   Pause,
   Pencil,
   Play,
+  Library,
   RefreshCcw,
   Sparkles,
   Square,
@@ -1673,8 +1674,7 @@ export default function ImageGenerationTool() {
             >
               <div
                 className={cn(
-                  'pointer-events-auto mx-auto max-w-full',
-                  isCompactComposer ? 'w-fit' : 'w-full max-w-[64rem]'
+                  'pointer-events-auto mx-auto w-fit max-w-full'
                 )}
               >
                 <div className="pt-1">
@@ -2100,130 +2100,135 @@ export default function ImageGenerationTool() {
                           />
                         </div>
 
-                        <div className="overflow-x-auto px-4 pb-3 pt-1">
-                          <div className="flex min-w-max items-end gap-2 pr-1">
-                            <Button type="button" variant="ghost" size="sm" className="h-9 shrink-0 rounded-[0.85rem]" onClick={() => fileInputRef.current?.click()}>
-                              <Upload className="h-4 w-4" />
-                              Upload new
-                            </Button>
-                            <input
-                              ref={fileInputRef}
-                              type="file"
-                              accept="image/*"
-                              multiple
-                              className="hidden"
-                              onChange={(event) => {
-                                void handleFileSelect(event)
-                              }}
-                            />
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-9 shrink-0 rounded-[0.85rem]"
-                              onClick={() => setIsDrawingDialogOpen(true)}
-                            >
-                              <Pencil className="h-4 w-4" />
-                              Draw
-                            </Button>
-                            <Button type="button" variant="ghost" size="sm" className="h-9 shrink-0 rounded-[0.85rem]" onClick={() => setIsLibraryDialogOpen(true)}>
-                              Add from library
-                            </Button>
-
-                            {!activePipeline && draft.origin === 'new' && !draft.sourceTurnId && canClearComposer ? (
+                        <div className="flex flex-nowrap items-end gap-8 px-4 pb-3 pt-1">
+                          <div className="grid min-w-0 gap-2">
+                            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 pr-1">
+                              <Button type="button" variant="outline" size="sm" className="h-9 shrink-0 rounded-[0.85rem] bg-background/70 hover:bg-accent/70" onClick={() => fileInputRef.current?.click()}>
+                                <Upload className="h-4 w-4" />
+                                Upload
+                              </Button>
+                              <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                className="hidden"
+                                onChange={(event) => {
+                                  void handleFileSelect(event)
+                                }}
+                              />
+                              <Button type="button" variant="outline" size="sm" className="h-9 shrink-0 rounded-[0.85rem] bg-background/70 hover:bg-accent/70" onClick={() => setIsLibraryDialogOpen(true)}>
+                                <Library className="h-4 w-4" />
+                                Library
+                              </Button>
                               <Button
                                 type="button"
-                                variant="ghost"
+                                variant="outline"
                                 size="sm"
-                                className="h-9 shrink-0 rounded-[0.85rem]"
-                                onClick={() => {
-                                  void handleClearDraft()
-                                }}
+                                className="h-9 shrink-0 rounded-[0.85rem] bg-background/70 hover:bg-accent/70"
+                                onClick={() => setIsDrawingDialogOpen(true)}
                               >
-                                <X className="h-4 w-4" />
-                                Clear
+                                <Pencil className="h-4 w-4" />
+                                Draw
                               </Button>
-                            ) : null}
 
-                            <Select value={draft.model} onValueChange={(value) => { void setDraftModel(value as ImageGenerationModel) }}>
-                              <SelectTrigger className="h-9 min-w-[10.5rem] shrink-0 rounded-[0.85rem] bg-background/70">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {IMAGE_GENERATION_MODELS.map((entry) => (
-                                  <SelectItem key={entry.id} value={entry.id}>
-                                    {entry.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-
-                            <Select value={String(draft.count)} onValueChange={(value) => { void setDraftCount(Number(value)) }}>
-                              <SelectTrigger className="h-9 w-[7.25rem] shrink-0 rounded-[0.85rem] bg-background/70">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {IMAGE_COUNT_OPTIONS.map((value) => (
-                                  <SelectItem key={value} value={String(value)}>
-                                    {value} image{value > 1 ? 's' : ''}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-
-                            <Select value={draft.aspectRatio} onValueChange={(value) => { void setDraftAspectRatio(value as ImageAspectRatio) }}>
-                              <SelectTrigger className="h-9 w-[4.9rem] shrink-0 rounded-[0.85rem] bg-background/70">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {IMAGE_ASPECT_RATIO_OPTIONS.map((value) => (
-                                  <SelectItem key={value} value={value}>
-                                    {value}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-
-                            <Select value={draft.imageSize} onValueChange={(value) => { void setDraftImageSize(value as ImageSize) }}>
-                              <SelectTrigger className="h-9 w-[4.35rem] shrink-0 rounded-[0.85rem] bg-background/70">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {IMAGE_SIZE_OPTIONS.map((value) => (
-                                  <SelectItem key={value} value={value}>
-                                    {value}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-
-                            <span className="ml-1 shrink-0 whitespace-nowrap text-xs text-muted-foreground">
-                              {referenceUsageLabel}
-                            </span>
-
-                            <div className="ml-1 flex shrink-0 flex-col items-start gap-1">
-                              <Button
-                                type="button"
-                                onClick={() => {
-                                  void handleEnqueue()
-                                }}
-                                disabled={!isHydrated || !draft.prompt.trim()}
-                                className="h-9 min-w-[11.25rem] rounded-[0.85rem]"
-                              >
-                                {runningTurn ? <Sparkles className="h-4 w-4" /> : <WandSparkles className="h-4 w-4" />}
-                                {runningTurn || queuePaused ? 'Add to queue' : 'Generate'}
-                              </Button>
-                              {runningTurn ? (
-                                <button
+                              {!activePipeline && draft.origin === 'new' && !draft.sourceTurnId && canClearComposer ? (
+                                <Button
                                   type="button"
-                                  onClick={handleCancelCurrent}
-                                  className="inline-flex h-7 items-center gap-1.5 rounded-[0.75rem] px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-9 shrink-0 rounded-[0.85rem] bg-background/70 hover:bg-accent/70"
+                                  onClick={() => {
+                                    void handleClearDraft()
+                                  }}
                                 >
-                                  <Square className="h-3 w-3 fill-current" />
-                                  Cancel current
-                                </button>
+                                  <X className="h-4 w-4" />
+                                  Clear
+                                </Button>
                               ) : null}
                             </div>
+
+                            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 pr-1">
+                              <Select value={draft.model} onValueChange={(value) => { void setDraftModel(value as ImageGenerationModel) }}>
+                                <SelectTrigger className="h-9 w-[10rem] shrink-0 rounded-[0.85rem] bg-background/70">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {IMAGE_GENERATION_MODELS.map((entry) => (
+                                    <SelectItem key={entry.id} value={entry.id}>
+                                      {entry.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+
+                              <Select value={String(draft.count)} onValueChange={(value) => { void setDraftCount(Number(value)) }}>
+                                <SelectTrigger className="h-9 w-[6.85rem] shrink-0 rounded-[0.85rem] bg-background/70">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {IMAGE_COUNT_OPTIONS.map((value) => (
+                                    <SelectItem key={value} value={String(value)}>
+                                      {value} image{value > 1 ? 's' : ''}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+
+                              <Select value={draft.aspectRatio} onValueChange={(value) => { void setDraftAspectRatio(value as ImageAspectRatio) }}>
+                                <SelectTrigger className="h-9 w-[4.7rem] shrink-0 rounded-[0.85rem] bg-background/70">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {IMAGE_ASPECT_RATIO_OPTIONS.map((value) => (
+                                    <SelectItem key={value} value={value}>
+                                      {value}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+
+                              <Select value={draft.imageSize} onValueChange={(value) => { void setDraftImageSize(value as ImageSize) }}>
+                                <SelectTrigger className="h-9 w-[4rem] shrink-0 rounded-[0.85rem] bg-background/70">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {IMAGE_SIZE_OPTIONS.map((value) => (
+                                    <SelectItem key={value} value={value}>
+                                      {value}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+
+                              <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+                                {referenceUsageLabel}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex shrink-0 flex-col items-start gap-1">
+                            <Button
+                              type="button"
+                              onClick={() => {
+                                void handleEnqueue()
+                              }}
+                              disabled={!isHydrated || !draft.prompt.trim()}
+                              className="h-9 min-w-[11.25rem] rounded-[0.85rem]"
+                            >
+                              {runningTurn ? <Sparkles className="h-4 w-4" /> : <WandSparkles className="h-4 w-4" />}
+                              {runningTurn || queuePaused ? 'Add to queue' : 'Generate'}
+                            </Button>
+                            {runningTurn ? (
+                              <button
+                                type="button"
+                                onClick={handleCancelCurrent}
+                                className="inline-flex h-7 items-center gap-1.5 rounded-[0.75rem] px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                              >
+                                <Square className="h-3 w-3 fill-current" />
+                                Cancel current
+                              </button>
+                            ) : null}
                           </div>
                         </div>
                       </>

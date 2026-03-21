@@ -7,6 +7,7 @@ const OUTPUT_TYPES_KEY = 'yt-assist-output-types'
 const PRESETS_KEY = 'yt-assist-presets'
 const DEFAULT_PRESET_KEY = 'yt-assist-default-preset'
 const ACTIVE_PRESET_KEY = 'yt-assist-active-preset'
+const EMPTY_OPTION_SENTINEL = '__YT_ASSIST_EMPTY_OPTION__'
 
 // Generate dynamic output specifications based on output types
 function generateOutputSpecsContent(outputTypes: OutputType[]): string {
@@ -74,6 +75,78 @@ OUTPUT SPECIFICATIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ${specs}`
+}
+
+function normalizeTemplateLineEndings(value: string) {
+  return value.replace(/\r\n?/g, '\n')
+}
+
+function escapeTemplateVariable(name: string) {
+  return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function formatOptionalTemplateValue(value: string) {
+  const normalized = normalizeTemplateLineEndings(value)
+  return normalized.trim().length > 0 ? normalized : EMPTY_OPTION_SENTINEL
+}
+
+function replaceTemplateVariable(content: string, variableName: string, value: string) {
+  const variablePattern = new RegExp(`\\$\\{${escapeTemplateVariable(variableName)}\\}`, 'g')
+
+  if (value !== EMPTY_OPTION_SENTINEL && value.includes('\n')) {
+    content = content.replace(
+      new RegExp(`:\\s*\\$\\{${escapeTemplateVariable(variableName)}\\}`, 'g'),
+      `:\n${value}`,
+    )
+  }
+
+  return content.replace(variablePattern, value)
+}
+
+function cleanupInterpolatedTemplateContent(content: string) {
+  const cleanedLines = normalizeTemplateLineEndings(content)
+    .split('\n')
+    .flatMap((line) => {
+      const containsEmptyValue = line.includes(EMPTY_OPTION_SENTINEL)
+      const nextLine = line.split(EMPTY_OPTION_SENTINEL).join('').replace(/[ \t]+$/g, '')
+
+      if (!containsEmptyValue) {
+        return [nextLine]
+      }
+
+      const trimmed = nextLine.trim()
+      if (!trimmed || /[:\-]\s*$/.test(trimmed)) {
+        return []
+      }
+
+      return [nextLine]
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  return cleanedLines
+}
+
+export function interpolateTemplateContent(content: string, inputs: UserInputs) {
+  const replacements = {
+    transcript: normalizeTemplateLineEndings(inputs.transcript || '[NO TRANSCRIPT PROVIDED]'),
+    mustInclude: formatOptionalTemplateValue(inputs.mustInclude),
+    niceToInclude: formatOptionalTemplateValue(inputs.niceToInclude),
+    avoidWords: formatOptionalTemplateValue(inputs.avoidWords),
+    includeName: inputs.includeName && inputs.nameForTitles.trim() ? 'Yes' : EMPTY_OPTION_SENTINEL,
+    nameForTitles: formatOptionalTemplateValue(inputs.includeName ? inputs.nameForTitles : ''),
+    hashtagCount: normalizeTemplateLineEndings(inputs.hashtagCount || '5'),
+    additionalContext: formatOptionalTemplateValue(inputs.additionalContext),
+  } satisfies Record<string, string>
+
+  const interpolated = Object.entries(replacements).reduce(
+    (nextContent, [variableName, value]) =>
+      replaceTemplateVariable(nextContent, variableName, value),
+    content,
+  )
+
+  return cleanupInterpolatedTemplateContent(interpolated)
 }
 
 // Simple store hook for template sections
@@ -313,6 +386,11 @@ export function useTemplateStore() {
   const generatePrompt = useCallback((inputs: UserInputs): string => {
     // Generate dynamic output specs from output types
     const dynamicOutputSpecs = generateOutputSpecsContent(outputTypes)
+    const hashtagsEnabled = outputTypes.find((output) => output.id === 'hashtags')?.enabled ?? false
+    const effectiveInputs: UserInputs = {
+      ...inputs,
+      hashtagCount: hashtagsEnabled ? inputs.hashtagCount : '',
+    }
 
     // Replace the output-specs section content with dynamic content
     const sectionsWithDynamicSpecs = sections.map(s => 
@@ -323,19 +401,10 @@ export function useTemplateStore() {
       .filter(s => s.enabled)
       .sort((a, b) => a.order - b.order)
 
-    const replaceVars = (content: string): string => {
-      return content
-        .replace(/\$\{transcript\}/g, inputs.transcript || '[NO TRANSCRIPT PROVIDED]')
-        .replace(/\$\{mustInclude\}/g, inputs.mustInclude || '(none)')
-        .replace(/\$\{niceToInclude\}/g, inputs.niceToInclude || '(none)')
-        .replace(/\$\{avoidWords\}/g, inputs.avoidWords || '(none)')
-        .replace(/\$\{includeName\}/g, inputs.includeName ? 'Yes' : 'No')
-        .replace(/\$\{nameForTitles\}/g, inputs.nameForTitles || '(none)')
-        .replace(/\$\{hashtagCount\}/g, inputs.hashtagCount || '5')
-        .replace(/\$\{additionalContext\}/g, inputs.additionalContext || '(none)')
-    }
-
-    return enabledSections.map(section => replaceVars(section.content)).join('\n\n')
+    return enabledSections
+      .map((section) => interpolateTemplateContent(section.content, effectiveInputs))
+      .filter((section) => section.length > 0)
+      .join('\n\n')
   }, [sections, outputTypes])
 
   // Generate a preview prompt with placeholder values

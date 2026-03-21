@@ -45,6 +45,8 @@ export default function PackagingTool({ onSendToChat }: PackagingToolProps) {
   const {
     generatePrompt,
     outputTypes,
+    toggleOutputType,
+    updateOutputTypeQuantity,
     presets,
     loadPreset,
     deletePreset,
@@ -331,6 +333,9 @@ export default function PackagingTool({ onSendToChat }: PackagingToolProps) {
               onGenerate={handleGenerate}
               onSendToAI={onSendToChat ? handleSendToAI : undefined}
               generatePrompt={generatePrompt}
+              outputTypes={outputTypes}
+              onToggleOutput={toggleOutputType}
+              onChangeOutputQuantity={updateOutputTypeQuantity}
             />
           ) : null}
 
