@@ -37,6 +37,12 @@ import { usePackagingSessionStore } from '@/stores/packagingSessionStore'
 import type { TranscriptImportResponse } from '@/types/transcriptImport'
 import { cn } from '@/lib/utils'
 import { pollTranscriptImport, requestTranscriptImport } from '@/utils/transcriptImportClient'
+import {
+  packagingFieldGroupClassName,
+  packagingFieldLabelClassName,
+  packagingFieldStackClassName,
+  packagingTextareaFieldClassName,
+} from './fieldStyles'
 import type { UserInputs } from '../../types/template'
 
 interface InputsViewProps {
@@ -75,7 +81,6 @@ function getImportButtonLabel(status: ReturnType<typeof usePackagingSessionStore
 const sectionCardClassName =
   'rounded-[1.35rem] border-border/70 bg-card/95 shadow-[0_12px_32px_hsl(var(--background)/0.55)]'
 const fieldClassName = 'h-10 rounded-[0.95rem] border-border/60 bg-background/80 shadow-none'
-const textareaFieldClassName = 'rounded-[0.95rem] border-border/60 bg-background/80 shadow-none'
 
 export default function InputsView({
   userInputs,
@@ -468,33 +473,39 @@ export default function InputsView({
 
         <div className="space-y-6">
           <Card className={sectionCardClassName}>
-            <CardHeader className="pb-4">
+            <CardHeader className="pb-5">
               <CardTitle className="text-base">Prompt brief</CardTitle>
-              <CardDescription>Keep only the constraints that matter. Use one line per idea when you want the prompt to keep the separation.</CardDescription>
+              <CardDescription className="max-w-[20rem]">
+                Keep only the constraints that matter. Use one line per idea when you want the prompt to keep the separation.
+              </CardDescription>
             </CardHeader>
 
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="must-include">Must include</Label>
+            <CardContent className={packagingFieldStackClassName}>
+              <div className={packagingFieldGroupClassName}>
+                <Label htmlFor="must-include" className={packagingFieldLabelClassName}>
+                  Must include
+                </Label>
                 <Textarea
                   id="must-include"
                   value={userInputs.mustInclude}
                   onChange={(event) => updateField('mustInclude', event.target.value)}
                   placeholder={'One idea per line\nKey words\nThemes\nPhrases to keep'}
                   data-flow-name="input-must-include"
-                  className={cn('min-h-[6.5rem] resize-y', textareaFieldClassName)}
+                  className={cn('min-h-[6.5rem] resize-y', packagingTextareaFieldClassName)}
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="additional-context">Notes</Label>
+              <div className={packagingFieldGroupClassName}>
+                <Label htmlFor="additional-context" className={packagingFieldLabelClassName}>
+                  Notes
+                </Label>
                 <Textarea
                   id="additional-context"
                   value={userInputs.additionalContext}
                   onChange={(event) => updateField('additionalContext', event.target.value)}
                   placeholder="Any extra context for the AI..."
                   data-flow-name="input-additional-context"
-                  className={cn('min-h-[8.5rem] resize-none', textareaFieldClassName)}
+                  className={cn('min-h-[8.5rem] resize-none', packagingTextareaFieldClassName)}
                 />
               </div>
             </CardContent>

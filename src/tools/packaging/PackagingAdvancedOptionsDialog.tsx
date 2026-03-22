@@ -12,6 +12,12 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import type { OutputType, UserInputs } from '@/types/template'
+import {
+  packagingFieldGroupClassName,
+  packagingFieldLabelClassName,
+  packagingFieldStackClassName,
+  packagingTextareaFieldClassName,
+} from './fieldStyles'
 
 interface PackagingAdvancedOptionsDialogProps {
   open: boolean
@@ -23,11 +29,8 @@ interface PackagingAdvancedOptionsDialogProps {
   onChangeOutputQuantity: (id: string, quantity: number) => void
 }
 
-const textareaFieldClassName =
-  'rounded-[0.8rem] border-border/45 bg-background/72 shadow-none focus-visible:ring-[2px] focus-visible:ring-ring/20'
 const inlineStepperButtonClassName =
   'h-7 w-7 rounded-full border border-border/55 bg-background/78 text-foreground shadow-none hover:bg-muted/35 [&_svg]:size-3.5'
-const inputLabelClassName = 'block pl-[2px] text-[0.92rem]'
 
 function outputHasQuantity(outputId: OutputType['id']) {
   return !['core-hook', 'chapters'].includes(outputId)
@@ -126,13 +129,13 @@ export default function PackagingAdvancedOptionsDialog({
                 <div className="space-y-1">
                   <p className="text-sm font-semibold text-foreground">Prompt controls</p>
                   <p className="max-w-[20rem] text-[0.88rem] leading-5 text-muted-foreground">
-                    Keep extras, exclusions, and title naming rules here.
+                    Keep extras and exclusions here.
                   </p>
                 </div>
 
-                <div className="space-y-[1rem]">
-                  <div className="space-y-[0.75rem]">
-                    <Label htmlFor="advanced-nice-to-include" className={inputLabelClassName}>
+                <div className={packagingFieldStackClassName}>
+                  <div className={packagingFieldGroupClassName}>
+                    <Label htmlFor="advanced-nice-to-include" className={packagingFieldLabelClassName}>
                       Nice to include
                     </Label>
                     <Textarea
@@ -142,14 +145,14 @@ export default function PackagingAdvancedOptionsDialog({
                       placeholder={'Optional extras\nAngles\nBrand words\nTopics to weave in if useful'}
                       data-flow-name="input-nice-include"
                       className={cn(
-                        'min-h-[7rem] resize-y px-3.5 py-2.5 text-[0.9rem] leading-5 placeholder:text-[0.82rem] placeholder:leading-5 placeholder:text-muted-foreground/65',
-                        textareaFieldClassName,
+                        'min-h-[7rem] resize-y',
+                        packagingTextareaFieldClassName,
                       )}
                     />
                   </div>
 
-                  <div className="space-y-[0.75rem]">
-                    <Label htmlFor="avoid-words" className={inputLabelClassName}>
+                  <div className={packagingFieldGroupClassName}>
+                    <Label htmlFor="avoid-words" className={packagingFieldLabelClassName}>
                       Avoid words
                     </Label>
                     <Textarea
@@ -159,12 +162,11 @@ export default function PackagingAdvancedOptionsDialog({
                       placeholder={'One term per line if helpful\nWords or phrases to avoid'}
                       data-flow-name="input-avoid-words"
                       className={cn(
-                        'min-h-[6.25rem] resize-y px-3.5 py-2.5 text-[0.9rem] leading-5 placeholder:text-[0.82rem] placeholder:leading-5 placeholder:text-muted-foreground/65',
-                        textareaFieldClassName,
+                        'min-h-[6.25rem] resize-y',
+                        packagingTextareaFieldClassName,
                       )}
                     />
                   </div>
-
                 </div>
               </div>
 
