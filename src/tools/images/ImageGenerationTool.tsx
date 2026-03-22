@@ -3,12 +3,16 @@ import {
   useEffect,
   useMemo,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type SyntheticEvent,
   useRef,
   useState,
   type ChangeEvent,
   type ClipboardEvent,
   type DragEvent,
 } from 'react'
+import Masonry from '@mui/lab/Masonry'
+import Skeleton from '@mui/material/Skeleton'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import {
@@ -98,7 +102,7 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
 const COMPACT_COMPOSER_DEFAULT_PROMPT_HEIGHT = 160
 const COMPACT_COMPOSER_MIN_PROMPT_HEIGHT = 120
 const COMPACT_COMPOSER_MAX_PROMPT_HEIGHT = 360
-const DETAIL_RESULT_COLUMN_WIDTH = '320px'
+const MASONRY_SPACING = 1.5
 
 interface ViewerSelection {
   turnId: string
@@ -120,6 +124,7 @@ interface GridResultItem {
   asset: ImageAsset
   position: number
   createdAt: number
+  aspectRatio: ImageAspectRatio
 }
 
 interface ComposerContextMeta {
@@ -146,6 +151,81 @@ function buildDownloadBaseName(prompt: string, index: number) {
 
 function buildDrawingReferenceName(index: number) {
   return `drawing-reference-${index}.png`
+}
+
+function getSequentialMasonryColumns(preferredColumns: number, itemCount: number) {
+  return Math.max(1, Math.min(preferredColumns, itemCount || 1))
+}
+
+function SequentialMasonry({
+  columns,
+  children,
+}: {
+  columns: number
+  children: NonNullable<ReactNode>
+}) {
+  return (
+    <div className="w-full px-1.5">
+      <Masonry columns={columns} spacing={MASONRY_SPACING} sequential>
+        {children}
+      </Masonry>
+    </div>
+  )
+}
+
+function ProgressiveResultImage({
+  src,
+  alt,
+  aspectRatio,
+  className,
+  imageClassName,
+}: {
+  src: string
+  alt: string
+  aspectRatio: ImageAspectRatio
+  className?: string
+  imageClassName?: string
+}) {
+  const [isLoaded, setIsLoaded] = useState(false)
+  const cssAspectRatio = toCssAspectRatio(aspectRatio)
+
+  useEffect(() => {
+    setIsLoaded(false)
+  }, [src])
+
+  const handleLoad = useCallback((_event: SyntheticEvent<HTMLImageElement>) => {
+    setIsLoaded(true)
+  }, [])
+
+  return (
+    <div
+      className={cn('relative overflow-hidden bg-muted/30', className)}
+      style={{ aspectRatio: cssAspectRatio }}
+    >
+      {!isLoaded ? (
+        <>
+          <Skeleton
+            variant="rectangular"
+            animation="wave"
+            className="absolute inset-0 h-full w-full rounded-none bg-muted/70"
+          />
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_hsl(var(--foreground)/0.06),_transparent_58%)]" />
+        </>
+      ) : null}
+
+      <img
+        src={src}
+        alt={alt}
+        onLoad={handleLoad}
+        onError={handleLoad}
+        className={cn(
+          'absolute inset-0 h-full w-full object-cover transition-opacity duration-200',
+          isLoaded ? 'opacity-100' : 'opacity-0',
+          imageClassName
+        )}
+      />
+    </div>
+  )
 }
 
 function normalizeMimeType(mimeType: string) {
@@ -627,6 +707,7 @@ export default function ImageGenerationTool() {
           asset,
           position: index + 1,
           createdAt: turn.createdAt,
+          aspectRatio: turn.aspectRatio,
         }))
       }),
     [assetsById, turns]
@@ -639,6 +720,14 @@ export default function ImageGenerationTool() {
     const columnLimit = isSmallViewport ? 2 : isMediumViewport ? 5 : MAX_IMAGE_GRID_COLUMNS
     return Math.min(gridColumns, columnLimit)
   }, [gridColumns, isMediumViewport, isSmallViewport])
+  const detailResultColumns = useMemo(
+    () => (isSmallViewport ? 1 : isMediumViewport ? 2 : 3),
+    [isMediumViewport, isSmallViewport]
+  )
+  const detailReferenceColumns = useMemo(
+    () => (isSmallViewport ? 1 : 2),
+    [isSmallViewport]
+  )
   const selectedTurn = useMemo(
     () => (selectedImage ? turns.find((turn) => turn.id === selectedImage.turnId) ?? null : null),
     [selectedImage, turns]
@@ -1244,8 +1333,6 @@ export default function ImageGenerationTool() {
     void runTurn(nextTurn)
   }, [isHydrated, queuePaused, queuedTurns, runTurn, runningTurn])
 
-  const masonryColumnWidth = DETAIL_RESULT_COLUMN_WIDTH
-
   return (
     <ToolShell>
       <ToolHeader
@@ -1379,28 +1466,25 @@ export default function ImageGenerationTool() {
                           </p>
                         </div>
                       ) : (
-                        <div
-                          className="w-full"
-                          style={{ columnGap: '0.75rem', columnCount: effectiveGridColumns }}
-                        >
+                        <SequentialMasonry columns={effectiveGridColumns}>
                           {gridResultItems.map((item) => (
                             <button
                               key={item.assetId}
                               type="button"
                               onClick={() => openResultViewer(item.turnId, item.assetId)}
-                              className="group mb-3 block w-full break-inside-avoid overflow-hidden rounded-[1.35rem] border border-border/70 bg-card/90 text-left shadow-sm transition-transform hover:-translate-y-0.5"
+                              className="group block w-full overflow-hidden rounded-[1.35rem] border border-border/70 bg-card/90 text-left shadow-sm transition-transform hover:-translate-y-0.5"
                             >
-                              <img
+                              <ProgressiveResultImage
                                 src={item.asset.url}
                                 alt={`Generated result ${item.position} from ${dateFormatter.format(item.createdAt)}`}
-                                className="block h-auto w-full"
+                                aspectRatio={item.aspectRatio}
                               />
                               <span className="sr-only">
                                 Open generated result {item.position} from {dateFormatter.format(item.createdAt)}
                               </span>
                             </button>
                           ))}
-                        </div>
+                        </SequentialMasonry>
                       )}
                     </div>
                   )}
@@ -1509,22 +1593,23 @@ export default function ImageGenerationTool() {
                               </div>
 
                               {turn.status === 'complete' && resultAssets.length > 0 ? (
-                                <div
-                                  className="w-full"
-                                  style={{ columnGap: '0.75rem', columnWidth: masonryColumnWidth }}
+                                <SequentialMasonry
+                                  columns={getSequentialMasonryColumns(detailResultColumns, resultAssets.length)}
                                 >
                                   {resultAssets.map((asset, index) => (
                                     <button
                                       key={asset.id}
                                       type="button"
                                       onClick={() => openResultViewer(turn.id, asset.id)}
-                                      className="group mb-3 block w-full break-inside-avoid overflow-hidden rounded-[1.25rem] border border-border/70 bg-muted/30 text-left transition-transform hover:-translate-y-0.5"
+                                      className="group block w-full overflow-hidden rounded-[1.25rem] border border-border/70 bg-muted/30 text-left transition-transform hover:-translate-y-0.5"
                                     >
                                       <div className="overflow-hidden border-b border-border/60 bg-background/75 p-2">
-                                        <img
+                                        <ProgressiveResultImage
                                           src={asset.url}
                                           alt={`Generated result ${index + 1}`}
-                                          className="block h-auto w-full rounded-[0.9rem]"
+                                          aspectRatio={turn.aspectRatio}
+                                          className="rounded-[0.9rem]"
+                                          imageClassName="rounded-[0.9rem]"
                                         />
                                       </div>
                                       <div className="flex items-center justify-between gap-3 px-3 py-3">
@@ -1538,17 +1623,16 @@ export default function ImageGenerationTool() {
                                       </div>
                                     </button>
                                   ))}
-                                </div>
+                                </SequentialMasonry>
                               ) : (
-                                <div
-                                  className="w-full"
-                                  style={{ columnGap: '0.75rem', columnWidth: masonryColumnWidth }}
+                                <SequentialMasonry
+                                  columns={getSequentialMasonryColumns(detailResultColumns, turn.count)}
                                 >
                                   {Array.from({ length: turn.count }).map((_, index) => (
                                     <div
                                       key={`${turn.id}-placeholder-${index}`}
                                       className={cn(
-                                        'mb-3 break-inside-avoid overflow-hidden rounded-[1.25rem] border border-dashed border-border/80 bg-muted/20',
+                                        'overflow-hidden rounded-[1.25rem] border border-dashed border-border/80 bg-muted/20',
                                         turn.status === 'running' && 'animate-pulse'
                                       )}
                                     >
@@ -1574,7 +1658,7 @@ export default function ImageGenerationTool() {
                                       </div>
                                     </div>
                                   ))}
-                                </div>
+                                </SequentialMasonry>
                               )}
 
                               {isExpanded ? (
@@ -1619,16 +1703,15 @@ export default function ImageGenerationTool() {
                                         References used
                                       </p>
                                       {referenceAssets.length > 0 ? (
-                                        <div
-                                          className="w-full"
-                                          style={{ columnGap: '0.75rem', columnWidth: '140px' }}
+                                        <SequentialMasonry
+                                          columns={getSequentialMasonryColumns(detailReferenceColumns, referenceAssets.length)}
                                         >
                                           {referenceAssets.map((asset, index) => (
                                             <button
                                               key={asset.id}
                                               type="button"
                                               onClick={() => openTurnViewer(turn.id, asset.id)}
-                                              className="mb-3 block w-full break-inside-avoid overflow-hidden rounded-2xl border border-border/70 bg-card text-left transition-[border-color,background-color] hover:border-foreground/15 hover:bg-muted/18"
+                                              className="block w-full overflow-hidden rounded-2xl border border-border/70 bg-card text-left transition-[border-color,background-color] hover:border-foreground/15 hover:bg-muted/18"
                                             >
                                               <div className="overflow-hidden border-b border-border/60 bg-background/75 p-2">
                                                 <img
@@ -1647,7 +1730,7 @@ export default function ImageGenerationTool() {
                                               </div>
                                             </button>
                                           ))}
-                                        </div>
+                                        </SequentialMasonry>
                                       ) : (
                                         <div className="rounded-2xl bg-background/70 px-4 py-5 text-sm text-muted-foreground">
                                           No reference images were used for this turn.
@@ -2260,10 +2343,7 @@ export default function ImageGenerationTool() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 px-4 py-3 sm:px-6">
-            <p className="text-xs leading-5 text-muted-foreground">
-              Each click on <span className="font-medium text-foreground">Add as reference</span> appends a fresh image to the current draft. The drawing stays here until you clear it.
-            </p>
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border/60 px-4 py-3 sm:px-6">
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"

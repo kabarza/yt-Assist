@@ -39,8 +39,6 @@ export interface UserInputs {
   mustInclude: string
   niceToInclude: string
   avoidWords: string
-  includeName: boolean
-  nameForTitles: string
   hashtagCount: string
   additionalContext: string
 }
@@ -54,8 +52,6 @@ export const TEMPLATE_VARIABLES = [
   { name: 'mustInclude', description: 'Must-include words' },
   { name: 'niceToInclude', description: 'Nice-to-include words' },
   { name: 'avoidWords', description: 'Words to avoid' },
-  { name: 'includeName', description: 'Include name flag' },
-  { name: 'nameForTitles', description: 'Name for titles' },
   { name: 'hashtagCount', description: 'Number of hashtags' },
   { name: 'additionalContext', description: 'Additional context' },
 ] as const

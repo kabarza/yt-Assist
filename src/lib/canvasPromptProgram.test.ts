@@ -42,8 +42,6 @@ test('syncTranscriptSourceConfig mirrors prompt program changes back to legacy t
         mustInclude: '',
         niceToInclude: '',
         avoidWords: '',
-        includeName: false,
-        nameForTitles: '',
         additionalContext: '',
         transcriptIncludeTimestamps: true,
       },

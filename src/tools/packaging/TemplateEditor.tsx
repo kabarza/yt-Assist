@@ -472,8 +472,6 @@ export default function TemplateEditor() {
           <code className="text-foreground">${'${mustInclude}'}</code>
           <code className="text-foreground">${'${niceToInclude}'}</code>
           <code className="text-foreground">${'${avoidWords}'}</code>
-          <code className="text-foreground">${'${includeName}'}</code>
-          <code className="text-foreground">${'${nameForTitles}'}</code>
           <code className="text-foreground">${'${hashtagCount}'}</code>
           <code className="text-foreground">${'${additionalContext}'}</code>
         </div>

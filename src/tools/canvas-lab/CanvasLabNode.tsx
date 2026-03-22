@@ -132,7 +132,6 @@ function activeGuidanceFieldCount(brief: PackagingBriefConfig) {
     brief.niceToInclude.trim(),
     brief.avoidWords.trim(),
     brief.additionalContext.trim(),
-    brief.includeName && brief.nameForTitles.trim() ? brief.nameForTitles.trim() : '',
     brief.transcriptIncludeTimestamps ? '' : 'timestamps-off',
   ].filter(Boolean).length
 }
@@ -143,7 +142,6 @@ function guidanceSummaryText(brief: PackagingBriefConfig) {
     brief.niceToInclude.trim() ? 'nice-to-include set' : null,
     brief.avoidWords.trim() ? 'avoid words set' : null,
     brief.additionalContext.trim() ? 'directions added' : null,
-    brief.includeName && brief.nameForTitles.trim() ? `name: ${brief.nameForTitles.trim()}` : null,
     brief.transcriptIncludeTimestamps ? null : 'timestamps off',
   ].filter(Boolean)
 
@@ -886,42 +884,6 @@ function CanvasLabNodeComponent({ data }: any) {
                           </div>
                         </div>
 
-                        <div className="rounded-[0.95rem] border border-border/65 bg-background/70 p-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="space-y-1">
-                              <Label htmlFor={`${node.id}-include-name`} className="text-sm font-medium text-foreground">
-                                Include specific name
-                              </Label>
-                              <p className="text-xs leading-5 text-muted-foreground">
-                                Use this when titles should anchor to a person, channel, or brand.
-                              </p>
-                            </div>
-                            <Switch
-                              id={`${node.id}-include-name`}
-                              checked={transcriptConfig.brief.includeName}
-                              onCheckedChange={(checked) => {
-                                updateTranscriptInputField(TRANSCRIPT_SOURCE_INPUT_IDS.includeSpecificName, checked)
-                              }}
-                            />
-                          </div>
-
-                          {transcriptConfig.brief.includeName ? (
-                            <div className="mt-3 space-y-2">
-                              <Label htmlFor={`${node.id}-name-for-titles`} className="text-xs text-muted-foreground">
-                                Specific name
-                              </Label>
-                              <Input
-                                id={`${node.id}-name-for-titles`}
-                                value={transcriptConfig.brief.nameForTitles}
-                                onChange={(event) => {
-                                  updateTranscriptInputField(TRANSCRIPT_SOURCE_INPUT_IDS.specificName, event.target.value)
-                                }}
-                                className="rounded-[0.95rem] border-border/65 bg-background/80"
-                                placeholder="Person, brand, or channel name"
-                              />
-                            </div>
-                          ) : null}
-                        </div>
                       </div>
                     ) : null}
                   </div>

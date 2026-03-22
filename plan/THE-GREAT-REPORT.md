@@ -90,7 +90,7 @@ The flagship feature for generating high-CTR video metadata.
 
 **Template System:**
 - Customizable prompt sections
-- Variable interpolation: `${transcript}`, `${mustInclude}`, `${niceToInclude}`, `${avoidWords}`, `${includeName}`, `${nameForTitles}`, `${hashtagCount}`, `${additionalContext}`
+- Variable interpolation: `${transcript}`, `${mustInclude}`, `${niceToInclude}`, `${avoidWords}`, `${hashtagCount}`, `${additionalContext}`
 - Dynamic output specs generation
 - Section enable/disable toggle
 - Real-time preview

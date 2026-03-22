@@ -920,9 +920,6 @@ function formatBriefArtifactContent(config: PackagingBriefConfig) {
     config.mustInclude ? `Must include: ${config.mustInclude}` : null,
     config.niceToInclude ? `Nice to include: ${config.niceToInclude}` : null,
     config.avoidWords ? `Avoid: ${config.avoidWords}` : null,
-    config.includeName && config.nameForTitles
-      ? `Use name in titles: ${config.nameForTitles}`
-      : null,
     config.additionalContext ? `Packaging directions: ${config.additionalContext}` : null,
     `Transcript timestamps preferred: ${config.transcriptIncludeTimestamps ? 'yes' : 'no'}`,
   ]
@@ -936,7 +933,6 @@ function hasBriefConfigContent(config: PackagingBriefConfig) {
       config.niceToInclude.trim() ||
       config.avoidWords.trim() ||
       config.additionalContext.trim() ||
-      (config.includeName && config.nameForTitles.trim()) ||
       !config.transcriptIncludeTimestamps,
   )
 }
@@ -2827,8 +2823,6 @@ export const useCanvasLabStore = create<CanvasLabStore>((set, get) => ({
             mustInclude: packaging.mustInclude,
             niceToInclude: packaging.niceToInclude,
             avoidWords: packaging.avoidWords,
-            includeName: packaging.includeName,
-            nameForTitles: packaging.nameForTitles,
             additionalContext: packaging.additionalContext,
             transcriptIncludeTimestamps: packaging.transcriptIncludeTimestamps,
           }

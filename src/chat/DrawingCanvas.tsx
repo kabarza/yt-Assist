@@ -1,4 +1,6 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle, useCallback, memo, useMemo } from 'react';
+import { DropdownMenu as _DropdownMenu } from 'radix-ui';
+import { useContainer } from '@tldraw/editor';
 import {
   ArrowDownToolbarItem,
   ArrowLeftToolbarItem,
@@ -12,7 +14,7 @@ import {
   DefaultActionsMenuContent,
   DefaultMainMenu,
   DefaultMainMenuContent,
-  DefaultZoomMenu,
+  DefaultZoomMenuContent,
   DiamondToolbarItem,
   DrawToolbarItem,
   EllipseToolbarItem,
@@ -42,6 +44,7 @@ import {
   TldrawUiMenuItem,
   TldrawUiMenuSubmenu,
   TldrawUiToolbar,
+  TldrawUiToolbarButton,
   ToggleToolLockedButton,
   TriangleToolbarItem,
   XBoxToolbarItem,
@@ -51,6 +54,7 @@ import {
   useCanRedo,
   useCanUndo,
   useEditor,
+  useMenuIsOpen,
   usePassThroughWheelEvents,
   useReadonly,
   useTldrawUiComponents,
@@ -333,13 +337,76 @@ const DrawingMenuPanel = memo(function DrawingMenuPanel() {
   );
 });
 
+const DrawingZoomMenu = memo(function DrawingZoomMenu({
+  children,
+}: {
+  children?: React.ReactNode
+}) {
+  const container = useContainer();
+  const [isOpen, onOpenChange] = useMenuIsOpen('zoom menu');
+  const content = children ?? <DefaultZoomMenuContent />;
+
+  return (
+    <_DropdownMenu.Root dir="ltr" open={isOpen} onOpenChange={onOpenChange} modal={false}>
+      <DrawingZoomTriggerButton />
+      <_DropdownMenu.Portal container={container}>
+        <_DropdownMenu.Content
+          className="tlui-menu"
+          side="top"
+          align="end"
+          alignOffset={0}
+          sideOffset={8}
+          collisionPadding={12}
+        >
+          <TldrawUiMenuContextProvider type="menu" sourceId="zoom-menu">
+            {content}
+          </TldrawUiMenuContextProvider>
+        </_DropdownMenu.Content>
+      </_DropdownMenu.Portal>
+    </_DropdownMenu.Root>
+  );
+});
+
+const DrawingZoomTriggerButton = memo(function DrawingZoomTriggerButton() {
+  const editor = useEditor();
+  const breakpoint = useBreakpoint();
+  const zoom = useValue('zoom', () => editor.getZoomLevel(), [editor]);
+  const msg = useTranslation();
+
+  const handleDoubleClick = useCallback(() => {
+    editor.resetZoom(editor.getViewportScreenCenter(), {
+      animation: { duration: editor.options.animationMediumMs },
+    });
+  }, [editor]);
+
+  const value = `${Math.floor(zoom * 100)}%`;
+
+  return (
+    <TldrawUiToolbarButton
+      asChild
+      type="icon"
+      aria-label={`${msg('navigation-zone.zoom')} — ${value}`}
+      title={`${msg('navigation-zone.zoom')} — ${value}`}
+      data-testid="minimap.zoom-menu-button"
+      className="tlui-zoom-menu__button"
+      onDoubleClick={handleDoubleClick}
+    >
+      <_DropdownMenu.Trigger dir="ltr">
+        {breakpoint < PORTRAIT_BREAKPOINT.MOBILE ? null : (
+          <span style={{ flexGrow: 0, textAlign: 'center' }}>{value}</span>
+        )}
+      </_DropdownMenu.Trigger>
+    </TldrawUiToolbarButton>
+  );
+});
+
 const DrawingNavigationPanel = memo(function DrawingNavigationPanel() {
   const msg = useTranslation();
 
   return (
     <div className="tlui-navigation-panel drawing-zoom-island">
       <TldrawUiToolbar orientation="horizontal" label={msg('navigation-zone.title')}>
-        <DefaultZoomMenu />
+        <DrawingZoomMenu />
       </TldrawUiToolbar>
     </div>
   );

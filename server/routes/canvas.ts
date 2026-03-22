@@ -85,9 +85,6 @@ function summarizeArtifacts(body: CanvasExecuteNodeRequest) {
         body.brief.mustInclude ? `Must include: ${body.brief.mustInclude}` : null,
         body.brief.niceToInclude ? `Nice to include: ${body.brief.niceToInclude}` : null,
         body.brief.avoidWords ? `Avoid: ${body.brief.avoidWords}` : null,
-        body.brief.includeName && body.brief.nameForTitles
-          ? `Use this name when useful: ${body.brief.nameForTitles}`
-          : null,
         body.brief.additionalContext ? `Packaging directions: ${body.brief.additionalContext}` : null,
       ]
         .filter(Boolean)

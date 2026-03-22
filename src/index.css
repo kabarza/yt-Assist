@@ -436,6 +436,8 @@ body {
   --draw-island-gap: 8px;
   --draw-main-menu-size: 48px;
   --draw-zoom-island-width: 64px;
+  --draw-zoom-bottom-offset: 8px;
+  --draw-zoom-right-offset: 108px;
 }
 
 .drawing-canvas-root .drawing-main-menu-island {
@@ -474,8 +476,8 @@ body {
   position: absolute !important;
   top: auto !important;
   left: auto !important;
-  right: calc(env(safe-area-inset-right) + 8px) !important;
-  bottom: calc(env(safe-area-inset-bottom) + 8px) !important;
+  right: calc(env(safe-area-inset-right) + var(--draw-zoom-right-offset)) !important;
+  bottom: calc(env(safe-area-inset-bottom) + var(--draw-zoom-bottom-offset)) !important;
   width: fit-content !important;
   min-width: var(--draw-zoom-island-width) !important;
   border: 2px solid var(--tl-color-background) !important;
@@ -488,6 +490,12 @@ body {
 
 .drawing-canvas-root .drawing-zoom-island::before {
   display: none !important;
+}
+
+@media (max-width: 700px) {
+  .drawing-canvas-root {
+    --draw-zoom-right-offset: 12px;
+  }
 }
 
 .drawing-canvas-root .tlui-main-toolbar--horizontal .tlui-main-toolbar__extras {

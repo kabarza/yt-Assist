@@ -27,8 +27,6 @@ const DEFAULT_PACKAGING_BRIEF: PackagingBriefConfig = {
   mustInclude: '',
   niceToInclude: '',
   avoidWords: '',
-  includeName: false,
-  nameForTitles: '',
   additionalContext: '',
   transcriptIncludeTimestamps: true,
 }
@@ -51,8 +49,6 @@ export const TRANSCRIPT_SOURCE_INPUT_IDS = {
   wordsToAvoid: 'words_to_avoid',
   additionalContext: 'additional_context',
   preferTimestamps: 'prefer_timestamps',
-  includeSpecificName: 'include_specific_name',
-  specificName: 'specific_name',
 } as const
 
 function cloneSelections(
@@ -323,33 +319,6 @@ export function createTranscriptSourcePromptProgram(options?: {
         injectionRule: 'boolean_preference',
         defaultValue: true,
         value: brief.transcriptIncludeTimestamps,
-      }),
-      createPromptProgramInputField({
-        id: TRANSCRIPT_SOURCE_INPUT_IDS.includeSpecificName,
-        type: 'boolean',
-        label: 'Include specific name',
-        description: 'Use a fixed person, brand, or channel name when helpful.',
-        section: 'optional',
-        visible: 'collapsible',
-        promptLabel: 'Include specific name',
-        injectionRule: 'boolean_preference',
-        defaultValue: false,
-        value: brief.includeName,
-      }),
-      createPromptProgramInputField({
-        id: TRANSCRIPT_SOURCE_INPUT_IDS.specificName,
-        type: 'short_text',
-        label: 'Specific name',
-        description: 'The person, brand, or channel name to anchor outputs to.',
-        section: 'optional',
-        visible: 'collapsible',
-        promptLabel: 'Specific name',
-        injectionRule: 'conditional_value',
-        visibleWhen: {
-          fieldId: TRANSCRIPT_SOURCE_INPUT_IDS.includeSpecificName,
-          equals: true,
-        },
-        value: brief.nameForTitles,
       }),
     ],
     outputSchema: PACKAGING_OUTPUT_NODE_KINDS.map((kind) =>
@@ -638,16 +607,11 @@ export function normalizePromptProgramNodeConfig(
 
 export function deriveTranscriptSourceLegacyState(promptProgram: PromptProgramNodeConfig) {
   const transcript = String(getPromptProgramInputValue(promptProgram, TRANSCRIPT_SOURCE_INPUT_IDS.transcript) || '')
-  const includeName = Boolean(
-    getPromptProgramInputValue(promptProgram, TRANSCRIPT_SOURCE_INPUT_IDS.includeSpecificName),
-  )
 
   const brief: PackagingBriefConfig = {
     mustInclude: String(getPromptProgramInputValue(promptProgram, TRANSCRIPT_SOURCE_INPUT_IDS.mustInclude) || ''),
     niceToInclude: String(getPromptProgramInputValue(promptProgram, TRANSCRIPT_SOURCE_INPUT_IDS.niceToInclude) || ''),
     avoidWords: String(getPromptProgramInputValue(promptProgram, TRANSCRIPT_SOURCE_INPUT_IDS.wordsToAvoid) || ''),
-    includeName,
-    nameForTitles: String(getPromptProgramInputValue(promptProgram, TRANSCRIPT_SOURCE_INPUT_IDS.specificName) || ''),
     additionalContext: String(getPromptProgramInputValue(promptProgram, TRANSCRIPT_SOURCE_INPUT_IDS.additionalContext) || ''),
     transcriptIncludeTimestamps: Boolean(
       getPromptProgramInputValue(promptProgram, TRANSCRIPT_SOURCE_INPUT_IDS.preferTimestamps),

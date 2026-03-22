@@ -17,8 +17,6 @@ export const DEFAULT_PACKAGING_INPUTS: UserInputs = {
   mustInclude: '',
   niceToInclude: '',
   avoidWords: '',
-  includeName: false,
-  nameForTitles: '',
   hashtagCount: '5',
   additionalContext: '',
 }

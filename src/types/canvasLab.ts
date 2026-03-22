@@ -232,8 +232,6 @@ export interface PackagingBriefConfig {
   mustInclude: string
   niceToInclude: string
   avoidWords: string
-  includeName: boolean
-  nameForTitles: string
   additionalContext: string
   transcriptIncludeTimestamps: boolean
 }

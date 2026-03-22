@@ -12,8 +12,6 @@ function createInputs(overrides: Partial<UserInputs> = {}): UserInputs {
     mustInclude: '',
     niceToInclude: '',
     avoidWords: '',
-    includeName: false,
-    nameForTitles: '',
     hashtagCount: '5',
     additionalContext: '',
     ...overrides,
@@ -25,8 +23,6 @@ test('interpolateTemplateContent removes empty optional lines from the inputs se
 Must-Include Words: \${mustInclude}
 Nice-To-Include Words: \${niceToInclude}
 Avoid Words/Phrases: \${avoidWords}
-Must Include Name in Titles?: \${includeName}
-Name for Titles: \${nameForTitles}
 Hashtag Count: \${hashtagCount}
 Additional Context: \${additionalContext}`
 
@@ -56,24 +52,5 @@ Mention pricing
 Additional Context:
 Audience: creators
 Tone: direct`,
-  )
-})
-
-test('interpolateTemplateContent keeps name fields only when a title anchor is configured', () => {
-  const content = `Must Include Name in Titles?: \${includeName}
-Name for Titles: \${nameForTitles}`
-
-  const result = interpolateTemplateContent(
-    content,
-    createInputs({
-      includeName: true,
-      nameForTitles: 'MrBeast',
-    }),
-  )
-
-  assert.equal(
-    result,
-    `Must Include Name in Titles?: Yes
-Name for Titles: MrBeast`,
   )
 })

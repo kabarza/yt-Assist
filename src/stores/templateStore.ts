@@ -134,8 +134,9 @@ export function interpolateTemplateContent(content: string, inputs: UserInputs) 
     mustInclude: formatOptionalTemplateValue(inputs.mustInclude),
     niceToInclude: formatOptionalTemplateValue(inputs.niceToInclude),
     avoidWords: formatOptionalTemplateValue(inputs.avoidWords),
-    includeName: inputs.includeName && inputs.nameForTitles.trim() ? 'Yes' : EMPTY_OPTION_SENTINEL,
-    nameForTitles: formatOptionalTemplateValue(inputs.includeName ? inputs.nameForTitles : ''),
+    // Keep legacy variables empty so older saved templates cleanly strip these lines.
+    includeName: EMPTY_OPTION_SENTINEL,
+    nameForTitles: EMPTY_OPTION_SENTINEL,
     hashtagCount: normalizeTemplateLineEndings(inputs.hashtagCount || '5'),
     additionalContext: formatOptionalTemplateValue(inputs.additionalContext),
   } satisfies Record<string, string>
@@ -417,8 +418,6 @@ export function useTemplateStore() {
       mustInclude: '[Must-include words]',
       niceToInclude: '[Nice-to-include words]',
       avoidWords: '[Words to avoid]',
-      includeName: true,
-      nameForTitles: '[Name for titles]',
       hashtagCount: '5',
       additionalContext: '[Additional context]',
     }

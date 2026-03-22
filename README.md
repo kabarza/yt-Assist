@@ -139,8 +139,6 @@ When editing templates, use these variables:
 - `${mustInclude}` - Words that must appear in titles
 - `${niceToInclude}` - Words that would be nice to include
 - `${avoidWords}` - Words/phrases to avoid
-- `${includeName}` - Whether to include name (Yes/No)
-- `${nameForTitles}` - Name to include in titles
 - `${hashtagCount}` - Number of hashtags to generate
 - `${additionalContext}` - Extra instructions
 

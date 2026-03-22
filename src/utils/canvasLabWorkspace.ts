@@ -31,8 +31,6 @@ export const DEFAULT_PACKAGING_BRIEF: PackagingBriefConfig = {
   mustInclude: '',
   niceToInclude: '',
   avoidWords: '',
-  includeName: false,
-  nameForTitles: '',
   additionalContext: '',
   transcriptIncludeTimestamps: true,
 }
@@ -383,8 +381,6 @@ function normalizePackagingBriefConfig(input: unknown): PackagingBriefConfig {
     mustInclude: getString(input.mustInclude),
     niceToInclude: getString(input.niceToInclude),
     avoidWords: getString(input.avoidWords),
-    includeName: getBoolean(input.includeName),
-    nameForTitles: getString(input.nameForTitles),
     additionalContext: getString(input.additionalContext),
     transcriptIncludeTimestamps: getBoolean(input.transcriptIncludeTimestamps, true),
   }

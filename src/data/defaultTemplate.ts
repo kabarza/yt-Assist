@@ -201,8 +201,6 @@ MY INPUTS
 Must-Include Words: \${mustInclude}
 Nice-To-Include Words: \${niceToInclude}
 Avoid Words/Phrases: \${avoidWords}
-Must Include Name in Titles?: \${includeName}
-Name for Titles: \${nameForTitles}
 Hashtag Count: \${hashtagCount}
 Additional Context: \${additionalContext}`,
   },
